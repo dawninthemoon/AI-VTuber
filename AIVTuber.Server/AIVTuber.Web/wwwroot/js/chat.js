@@ -69,7 +69,7 @@ async function sendMessage() {
 
         thinkingBubble.textContent = aiText;
 
-        speak(aiText);
+        //speak(aiText);
 
         scrollToBottom();
     }

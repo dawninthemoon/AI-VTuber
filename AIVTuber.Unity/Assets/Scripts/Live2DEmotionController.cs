@@ -8,6 +8,7 @@ public class Live2DEmotionController : MonoBehaviour
 
     private string currentEmotion = "neutral";
     private float currentIntensity = 0.5f;
+    private float _eyeOpening = 1f;
 
     private CubismParameter eyeLSmile;
     private CubismParameter eyeRSmile;
@@ -76,8 +77,13 @@ public class Live2DEmotionController : MonoBehaviour
         string emotion,
         float intensity)
     {
-        currentEmotion = emotion.ToLowerInvariant();
+        currentEmotion = string.IsNullOrEmpty(emotion) ? "neutral" : emotion.ToLowerInvariant();
         currentIntensity = Mathf.Clamp01(intensity);
+    }
+
+    public void SetEyeOpening(float eyeOpening)
+    {
+        _eyeOpening = Mathf.Clamp01(eyeOpening);
     }
 
     private void LateUpdate()
@@ -144,6 +150,21 @@ public class Live2DEmotionController : MonoBehaviour
                 );
 
                 break;
+        }
+
+        ApplyEyeOpening();
+    }
+
+    private void ApplyEyeOpening()
+    {
+        if (eyeLOpen != null)
+        {
+            SetValue(eyeLOpen, eyeLOpen.Value * _eyeOpening);
+        }
+
+        if (eyeROpen != null)
+        {
+            SetValue(eyeROpen, eyeROpen.Value * _eyeOpening);
         }
     }
 

@@ -13,6 +13,7 @@ public class Live2DLipSyncController : MonoBehaviour
     private CubismParameter mouthOpen;
 
     private Coroutine speakingCoroutine;
+    public bool IsSpeaking => speakingCoroutine != null;
 
     private void Awake()
     {
@@ -33,6 +34,12 @@ public class Live2DLipSyncController : MonoBehaviour
 
     public void Speak(string text)
     {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            StopSpeaking();
+            return;
+        }
+
         if (speakingCoroutine != null)
         {
             StopCoroutine(speakingCoroutine);
@@ -40,6 +47,25 @@ public class Live2DLipSyncController : MonoBehaviour
 
         speakingCoroutine =
             StartCoroutine(SpeakRoutine(text));
+    }
+
+    public void StopSpeaking()
+    {
+        if (speakingCoroutine != null)
+        {
+            StopCoroutine(speakingCoroutine);
+            speakingCoroutine = null;
+        }
+
+        if (mouthOpen != null)
+        {
+            mouthOpen.Value = 0f;
+        }
+    }
+
+    private void OnDisable()
+    {
+        StopSpeaking();
     }
 
     private IEnumerator SpeakRoutine(string text)
