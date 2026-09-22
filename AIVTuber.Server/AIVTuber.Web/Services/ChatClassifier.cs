@@ -6,7 +6,6 @@ public sealed class ChatClassifier
 {
     private static readonly string[] ThinkKeywords =
     {
-        "왜",
         "이유",
         "분석",
         "비교",
@@ -129,7 +128,9 @@ public sealed class ChatClassifier
         return new GenerationProfile(
             ChatMode.Chat,
             Think: false,
-            NumPredict: 70,
+            // The response includes a JSON envelope as well as the spoken text.
+            // 70 tokens can stop generation before the closing JSON fields arrive.
+            NumPredict: 160,
             Temperature: 0.7,
             MaxHistoryMessages: 8
         );
@@ -151,7 +152,9 @@ public sealed class ChatClassifier
     {
         return new GenerationProfile(
             ChatMode.Think,
-            Think: true,
+            // qwen3:4b can spend the whole small output budget on hidden thinking
+            // and return an empty content field. Prefer a direct answer for live chat.
+            Think: false,
             NumPredict: 300,
             Temperature: 0.55,
             MaxHistoryMessages: 20,

@@ -6,6 +6,12 @@ namespace AIVTuber.Web.Services;
 
 public sealed class ChatService
 {
+    private static readonly JsonSerializerOptions ResponseJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        AllowTrailingCommas = true
+    };
+
     private readonly OllamaService _ollamaService;
     private readonly ChatClassifier _classifier;
     private readonly OllamaOptions _options;
@@ -112,33 +118,19 @@ public sealed class ChatService
                     cancellationToken
                 );
 
-            AICharacterResponse? result = null;
-
-            // 5. JSON 응답 파싱
-            try
-            {
-                result =
-                    JsonSerializer.Deserialize<AICharacterResponse>(
-                        rawResponse,
-                        new JsonSerializerOptions
-                        {
-                            PropertyNameCaseInsensitive = true
-                        }
-                    );
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "AI JSON 파싱 실패: {Response}",
-                    rawResponse
-                );
-            }
+            // 5. JSON 응답 파싱. 일부 모델은 JSON을 코드 블록으로 감싸기도 한다.
+            AICharacterResponse? result = TryParseResponse(rawResponse);
+            bool responseParsed = result != null &&
+                !string.IsNullOrWhiteSpace(result.Text);
 
             // 6. JSON 형식이 깨졌을 때 fallback
-            if (result == null ||
-                string.IsNullOrWhiteSpace(result.Text))
+            if (!responseParsed)
             {
+                _logger.LogWarning(
+                    "AI JSON 파싱 실패. 응답을 대화 기록에 저장하지 않습니다: {Response}",
+                    rawResponse
+                );
+
                 result = new AICharacterResponse
                 {
                     Text =
@@ -150,7 +142,7 @@ public sealed class ChatService
             }
 
             // 7. 결과 정리
-            result.Text = result.Text.Trim();
+            result!.Text = result.Text.Trim();
 
             result.Intensity =
                 Math.Clamp(
@@ -166,12 +158,16 @@ public sealed class ChatService
 
             // 8. 히스토리에는 JSON 전체가 아니라
             // 실제 캐릭터 대사만 저장
-            _history.Add(
-                new ChatMessage(
-                    "assistant",
-                    result.Text
-                )
-            );
+            // 파싱 실패 안내문은 모델의 실제 답변이 아니므로 문맥을 오염시키지 않는다.
+            if (responseParsed)
+            {
+                _history.Add(
+                    new ChatMessage(
+                        "assistant",
+                        result.Text
+                    )
+                );
+            }
 
             // 메모리가 계속 커지는 것 방지
             TrimStoredHistory();
@@ -181,6 +177,46 @@ public sealed class ChatService
         finally
         {
             _lock.Release();
+        }
+    }
+
+    private static AICharacterResponse? TryParseResponse(string rawResponse)
+    {
+        if (string.IsNullOrWhiteSpace(rawResponse))
+        {
+            return null;
+        }
+
+        string candidate = rawResponse.Trim();
+
+        if (candidate.StartsWith("```", StringComparison.Ordinal))
+        {
+            int firstLineEnd = candidate.IndexOf('\n');
+            int closingFence = candidate.LastIndexOf("```", StringComparison.Ordinal);
+
+            if (firstLineEnd >= 0 && closingFence > firstLineEnd)
+            {
+                candidate = candidate[(firstLineEnd + 1)..closingFence].Trim();
+            }
+        }
+
+        int objectStart = candidate.IndexOf('{');
+        int objectEnd = candidate.LastIndexOf('}');
+
+        if (objectStart >= 0 && objectEnd > objectStart)
+        {
+            candidate = candidate[objectStart..(objectEnd + 1)];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<AICharacterResponse>(
+                candidate,
+                ResponseJsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

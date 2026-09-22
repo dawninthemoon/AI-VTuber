@@ -4,5 +4,6 @@ public sealed record CharacterState(
     string Text,
     string Emotion,
     float Intensity,
-    long Version
+    long Version,
+    bool HasAudio
 );

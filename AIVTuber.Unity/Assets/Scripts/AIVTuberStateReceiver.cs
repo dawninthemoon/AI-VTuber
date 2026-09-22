@@ -207,7 +207,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
         StopVoice();
 
-        if (string.IsNullOrWhiteSpace(state.text))
+        if (string.IsNullOrWhiteSpace(state.text) || !state.hasAudio)
         {
             voiceCoroutine = null;
             return;
@@ -310,5 +310,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
         public string emotion;
         public float intensity;
         public long version;
+        public bool hasAudio;
     }
 }

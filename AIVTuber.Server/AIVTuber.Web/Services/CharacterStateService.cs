@@ -12,7 +12,8 @@ public sealed class CharacterStateService
             Text: "",
             Emotion: "neutral",
             Intensity: 0.5f,
-            Version: 0
+            Version: 0,
+            HasAudio: false
         );
 
     public CharacterState Get()
@@ -35,7 +36,8 @@ public sealed class CharacterStateService
                 Text: text,
                 Emotion: emotion,
                 Intensity: intensity,
-                Version: _state.Version + 1
+                Version: _state.Version + 1,
+                HasAudio: audio is { Length: > 0 }
             );
 
             if (audio is { Length: > 0 })
@@ -65,7 +67,8 @@ public sealed class CharacterStateService
                 Text: "",
                 Emotion: "neutral",
                 Intensity: 0.5f,
-                Version: _state.Version + 1
+                Version: _state.Version + 1,
+                HasAudio: false
             );
         }
     }
