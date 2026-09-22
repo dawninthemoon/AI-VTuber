@@ -10,6 +10,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection("Ollama")
 );
+builder.Services.Configure<SupertonicOptions>(
+    builder.Configuration.GetSection("Supertonic")
+);
 
 // -----------------------------
 // HTTP Services
@@ -17,8 +20,8 @@ builder.Services.Configure<OllamaOptions>(
 
 builder.Services.AddHttpClient<OllamaService>();
 
-builder.Services.AddHttpClient<GPTSoVitsTtsService>();
 builder.Services.AddHttpClient<WikipediaSearchService>();
+builder.Services.AddSingleton<SupertonicTtsService>();
 
 // -----------------------------
 // Application Services
@@ -53,7 +56,7 @@ app.MapPost(
         ChatClassifier classifier,
         WikipediaSearchService searchService,
         CharacterStateService stateService,
-        GPTSoVitsTtsService ttsService,
+        SupertonicTtsService ttsService,
         ILogger<Program> logger,
         CancellationToken cancellationToken
     ) =>
@@ -154,7 +157,7 @@ app.MapPost(
         byte[]? audio = null;
 
         // ---------------------------------
-        // 2. GPT-SoVITS 음성 생성
+        // 2. Supertonic 음성 생성
         // ---------------------------------
 
         try
@@ -179,7 +182,7 @@ app.MapPost(
             // TTS가 실패해도 채팅 자체는 정상 동작하게 한다.
             logger.LogWarning(
                 ex,
-                "GPT-SoVITS TTS 생성 실패"
+                "Supertonic TTS 생성 실패"
             );
         }
 

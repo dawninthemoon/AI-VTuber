@@ -17,6 +17,15 @@
 
 ## 실행
 
+Supertonic 3 모델을 최초 한 번 다운로드합니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Scripts\download-supertonic.ps1
+```
+
+음성 설정은 `appsettings.json`의 `Supertonic` 섹션에서 변경합니다. `SpeakerId`는 0~9,
+`Speed`는 큰 값일수록 빠르게 발화합니다.
+
 Ollama:
 
 ```bash
