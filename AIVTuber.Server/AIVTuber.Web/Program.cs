@@ -31,6 +31,7 @@ builder.Services.AddSingleton<ChatService>();
 
 // Unity에 전달할 현재 캐릭터 상태
 builder.Services.AddSingleton<CharacterStateService>();
+builder.Services.AddSingleton<PlaybackStatusService>();
 
 var app = builder.Build();
 
@@ -246,11 +247,13 @@ app.MapPost(
     "/chat/reset",
     (
         ChatService chatService,
-        CharacterStateService stateService
+        CharacterStateService stateService,
+        PlaybackStatusService playbackStatusService
     ) =>
     {
         chatService.Reset();
         stateService.Reset();
+        playbackStatusService.Set(false);
 
         return Results.Ok();
     }
@@ -304,6 +307,28 @@ app.MapGet(
             "audio/wav"
         );
     }
+);
+
+// -----------------------------
+// Unity Voice Playback Status
+// -----------------------------
+
+app.MapPost(
+    "/voice/playback",
+    (
+        PlaybackStatusRequest request,
+        PlaybackStatusService playbackStatusService
+    ) =>
+    {
+        playbackStatusService.Set(request.Speaking);
+        return Results.Ok(playbackStatusService.Get());
+    }
+);
+
+app.MapGet(
+    "/voice/playback",
+    (PlaybackStatusService playbackStatusService) =>
+        Results.Ok(playbackStatusService.Get())
 );
 
 // -----------------------------

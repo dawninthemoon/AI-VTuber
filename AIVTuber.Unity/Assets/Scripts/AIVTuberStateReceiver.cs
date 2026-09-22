@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 using TMPro;
@@ -40,10 +41,14 @@ public class AIVTuberStateReceiver : MonoBehaviour
     private readonly Queue<VoiceSegment> voiceQueue =
         new Queue<VoiceSegment>();
     private AudioClip downloadedClip;
+    private bool reportedSpeaking;
 
 
     private string StateUrl =>
         $"{serverBaseUrl}/unity/state";
+
+    private string PlaybackStatusUrl =>
+        $"{serverBaseUrl}/voice/playback";
 
     private string GetAudioUrl(long version)
     {
@@ -104,6 +109,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
                 lipSyncController.StopSpeaking();
             }
 
+            ReportPlaybackStatus(false);
+
             return;
         }
 
@@ -117,6 +124,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
         audioSource.clip = downloadedClip;
         audioSource.Play();
+        ReportPlaybackStatus(true);
         Debug.Log(
             $"TTS 큐 재생 시작. 남은 조각={voiceQueue.Count}"
         );
@@ -352,6 +360,40 @@ public class AIVTuberStateReceiver : MonoBehaviour
         if (lipSyncController != null)
         {
             lipSyncController.StopSpeaking();
+        }
+
+        ReportPlaybackStatus(false);
+    }
+
+    private void ReportPlaybackStatus(bool speaking)
+    {
+        if (reportedSpeaking == speaking || !isActiveAndEnabled)
+        {
+            return;
+        }
+
+        reportedSpeaking = speaking;
+        StartCoroutine(SendPlaybackStatus(speaking));
+    }
+
+    private IEnumerator SendPlaybackStatus(bool speaking)
+    {
+        string json = $"{{\"speaking\":{speaking.ToString().ToLowerInvariant()}}}";
+
+        using UnityWebRequest request = new UnityWebRequest(
+            PlaybackStatusUrl,
+            UnityWebRequest.kHttpVerbPOST);
+        request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
+        request.downloadHandler = new DownloadHandlerBuffer();
+        request.SetRequestHeader("Content-Type", "application/json");
+
+        yield return request.SendWebRequest();
+
+        if (request.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogWarning(
+                $"Playback status update failed: {request.responseCode} {request.error}"
+            );
         }
     }
 
