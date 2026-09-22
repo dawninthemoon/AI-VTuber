@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI VTuber Test</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header class="header">
+        <div class="title">AI VTuber Test</div>
+        <button id="resetButton" class="reset-button" type="button">대화 초기화</button>
+    </header>
+
+    <main id="chat" class="chat"></main>
+
+    <footer class="input-area">
+        <input
+            id="message"
+            type="text"
+            placeholder="메시지를 입력하세요"
+            autocomplete="off"
+            aria-label="메시지 입력"
+        >
+        <button id="sendButton" type="button">전송</button>
+    </footer>
+
+    <script src="/js/chat.js"></script>
+</body>
+</html>
