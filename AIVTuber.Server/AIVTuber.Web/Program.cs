@@ -9,6 +9,7 @@ builder.Services.Configure<OllamaOptions>(
 builder.Services.AddHttpClient<OllamaService>();
 builder.Services.AddSingleton<ChatClassifier>();
 builder.Services.AddSingleton<ChatService>();
+builder.Services.AddSingleton<CharacterStateService>();
 
 var app = builder.Build();
 
@@ -18,6 +19,7 @@ app.UseStaticFiles();
 app.MapPost("/chat", async (
     ChatRequest request,
     ChatService chatService,
+    CharacterStateService stateService,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.Message))
@@ -30,11 +32,23 @@ app.MapPost("/chat", async (
 
     try
     {
-        var response = await chatService.SendAsync(
-            request.Message,
-            cancellationToken);
+        var response =
+            await chatService.SendAsync(
+                request.Message,
+                cancellationToken
+            );
 
-        return Results.Ok(new ChatResponse(response));
+        stateService.SetResponse(
+            response.Text,
+            response.Emotion,
+            response.Intensity
+        );
+
+        return Results.Ok(
+            new ChatResponse(
+                response.Text
+            )
+        );
     }
     catch (HttpRequestException ex)
     {
@@ -45,10 +59,20 @@ app.MapPost("/chat", async (
     }
 });
 
-app.MapPost("/chat/reset", (ChatService chatService) =>
+app.MapPost("/chat/reset", (
+    ChatService chatService,
+    CharacterStateService stateService) =>
 {
     chatService.Reset();
+    stateService.Reset();
+
     return Results.NoContent();
+});
+
+app.MapGet("/unity/state", (
+    CharacterStateService stateService) =>
+{
+    return Results.Ok(stateService.Get());
 });
 
 app.Run();

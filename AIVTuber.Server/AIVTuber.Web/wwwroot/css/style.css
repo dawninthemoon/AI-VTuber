@@ -97,10 +97,6 @@ body {
     font-size: 16px;
 }
 
-#message::placeholder {
-    color: #888;
-}
-
 #message:focus {
     border-color: #666;
 }
@@ -109,7 +105,6 @@ button {
     border: 0;
     color: #fff;
     cursor: pointer;
-    transition: opacity 0.15s ease;
 }
 
 button:disabled {
@@ -130,19 +125,4 @@ button:disabled {
     border-radius: 9px;
     background: #333;
     font-size: 13px;
-}
-
-@media (max-width: 720px) {
-    .message {
-        max-width: 88%;
-    }
-
-    .header {
-        padding: 0 12px;
-    }
-
-    .chat {
-        padding-left: 12px;
-        padding-right: 12px;
-    }
 }

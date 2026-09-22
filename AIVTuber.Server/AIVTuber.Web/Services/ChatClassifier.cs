@@ -73,33 +73,27 @@ public sealed class ChatClassifier
         return Normal();
     }
 
-    private static GenerationProfile Fast()
-    {
-        return new GenerationProfile(
+    private static GenerationProfile Fast() =>
+        new(
             Mode: ChatMode.Fast,
             Think: false,
             NumPredict: 100,
             Temperature: 0.7
         );
-    }
 
-    private static GenerationProfile Normal()
-    {
-        return new GenerationProfile(
+    private static GenerationProfile Normal() =>
+        new(
             Mode: ChatMode.Normal,
             Think: false,
             NumPredict: 180,
             Temperature: 0.65
         );
-    }
 
-    private static GenerationProfile Think()
-    {
-        return new GenerationProfile(
+    private static GenerationProfile Think() =>
+        new(
             Mode: ChatMode.Think,
             Think: true,
             NumPredict: 400,
             Temperature: 0.6
         );
-    }
 }

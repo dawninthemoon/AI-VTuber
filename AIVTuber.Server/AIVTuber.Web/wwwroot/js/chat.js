@@ -34,9 +34,9 @@ async function sendMessage() {
     input.value = "";
     input.focus();
 
-    // AI 생각중 말풍선 생성
     const thinkingBubble = addMessage(".", "ai", true);
-    const stopThinkingAnimation = startThinkingAnimation(thinkingBubble);
+    const stopThinkingAnimation =
+        startThinkingAnimation(thinkingBubble);
 
     try {
         const response = await fetch("/chat", {
@@ -53,8 +53,8 @@ async function sendMessage() {
             const errorText = await response.text();
 
             throw new Error(
-                errorText || "채팅 요청에 실패했습니다."
-            );
+                errorText ||
+                "채팅 요청에 실패했습니다.");
         }
 
         const result = await response.json();
@@ -64,12 +64,11 @@ async function sendMessage() {
         thinkingBubble.classList.remove("thinking");
 
         const aiText =
-            result.response || "응답이 비어 있습니다.";
+            result.response ||
+            "응답이 비어 있습니다.";
 
-        // AI 말풍선에 실제 답변 표시
         thinkingBubble.textContent = aiText;
 
-        // TTS 실행
         speak(aiText);
 
         scrollToBottom();
@@ -86,9 +85,7 @@ async function sendMessage() {
     }
     finally {
         isSending = false;
-
         setSendingState(false);
-
         input.focus();
     }
 }
@@ -119,39 +116,26 @@ function addMessage(
     return bubble;
 }
 
-function startThinkingAnimation(
-    bubble
-) {
+function startThinkingAnimation(bubble) {
     let dotCount = 1;
 
-    const intervalId =
-        setInterval(() => {
-            dotCount =
-                (dotCount % 3) + 1;
+    const intervalId = setInterval(() => {
+        dotCount = (dotCount % 3) + 1;
 
-            bubble.textContent =
-                ".".repeat(dotCount);
+        bubble.textContent =
+            ".".repeat(dotCount);
 
-            scrollToBottom();
-        }, 400);
+        scrollToBottom();
+    }, 400);
 
-    return () => {
-        clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
 }
 
 function speak(text) {
-    if (
-        !("speechSynthesis" in window)
-    ) {
-        console.warn(
-            "이 브라우저는 TTS를 지원하지 않습니다."
-        );
-
+    if (!("speechSynthesis" in window)) {
         return;
     }
 
-    // 기존 음성이 재생 중이면 중단
     speechSynthesis.cancel();
 
     const utterance =
@@ -160,7 +144,6 @@ function speak(text) {
     const voices =
         speechSynthesis.getVoices();
 
-    // 한국어 음성 자동 선택
     const koreanVoice =
         voices.find(voice =>
             voice.lang &&
@@ -170,24 +153,15 @@ function speak(text) {
         );
 
     if (koreanVoice) {
-        utterance.voice =
-            koreanVoice;
+        utterance.voice = koreanVoice;
     }
 
     utterance.lang = "ko-KR";
-
-    // 말하는 속도
     utterance.rate = 1.1;
-
-    // 목소리 높이
     utterance.pitch = 1.15;
-
-    // 볼륨
     utterance.volume = 1.0;
 
-    speechSynthesis.speak(
-        utterance
-    );
+    speechSynthesis.speak(utterance);
 }
 
 async function resetChat() {
@@ -197,28 +171,20 @@ async function resetChat() {
 
     try {
         const response =
-            await fetch(
-                "/chat/reset",
-                {
-                    method: "POST"
-                }
-            );
+            await fetch("/chat/reset", {
+                method: "POST"
+            });
 
         if (!response.ok) {
             throw new Error(
-                "대화 초기화에 실패했습니다."
-            );
+                "대화 초기화에 실패했습니다.");
         }
 
-        // TTS 중지
-        if (
-            "speechSynthesis" in window
-        ) {
+        if ("speechSynthesis" in window) {
             speechSynthesis.cancel();
         }
 
         chat.innerHTML = "";
-
         input.focus();
     }
     catch (error) {
@@ -226,19 +192,13 @@ async function resetChat() {
     }
 }
 
-function setSendingState(
-    sending
-) {
-    sendButton.disabled =
-        sending;
-
-    resetButton.disabled =
-        sending;
+function setSendingState(sending) {
+    sendButton.disabled = sending;
+    resetButton.disabled = sending;
 }
 
 function scrollToBottom() {
-    chat.scrollTop =
-        chat.scrollHeight;
+    chat.scrollTop = chat.scrollHeight;
 }
 
 input.focus();
