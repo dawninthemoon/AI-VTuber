@@ -1,0 +1,13 @@
+bin/
+obj/
+
+.env
+
+Library/
+Temp/
+Logs/
+UserSettings/
+
+.DS_Store
+.vscode/
+.idea/
