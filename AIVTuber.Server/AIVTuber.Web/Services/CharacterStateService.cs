@@ -6,6 +6,7 @@ public sealed class CharacterStateService
 {
     private readonly object _lock = new();
     private readonly Dictionary<long, byte[]> _audioByVersion = [];
+    private long _lastMessageId;
 
     private CharacterState _state =
         new(
@@ -13,7 +14,10 @@ public sealed class CharacterStateService
             Emotion: "neutral",
             Intensity: 0.5f,
             Version: 0,
-            HasAudio: false
+            HasAudio: false,
+            MessageId: 0,
+            SegmentIndex: 0,
+            SegmentCount: 0
         );
 
     public CharacterState Get()
@@ -24,29 +28,69 @@ public sealed class CharacterStateService
         }
     }
 
-    public void SetResponse(
+    public long BeginResponse(
         string text,
         string emotion = "neutral",
         float intensity = 0.5f,
-        byte[]? audio = null)
+        int segmentCount = 1)
     {
         lock (_lock)
         {
+            long messageId = ++_lastMessageId;
             CharacterState next = new(
                 Text: text,
                 Emotion: emotion,
                 Intensity: intensity,
                 Version: _state.Version + 1,
-                HasAudio: audio is { Length: > 0 }
+                HasAudio: false,
+                MessageId: messageId,
+                SegmentIndex: 0,
+                SegmentCount: Math.Max(segmentCount, 0)
             );
 
-            if (audio is { Length: > 0 })
+            _state = next;
+            TrimAudioHistory(next.Version);
+            return messageId;
+        }
+    }
+
+    public bool PublishAudioSegment(
+        long messageId,
+        string text,
+        string emotion,
+        float intensity,
+        int segmentIndex,
+        int segmentCount,
+        byte[] audio)
+    {
+        if (audio.Length == 0)
+        {
+            return false;
+        }
+
+        lock (_lock)
+        {
+            // A newer response superseded this TTS job.
+            if (messageId != _lastMessageId)
             {
-                _audioByVersion[next.Version] = audio;
+                return false;
             }
 
-            _audioByVersion.Remove(next.Version - 2);
+            CharacterState next = new(
+                Text: text,
+                Emotion: emotion,
+                Intensity: intensity,
+                Version: _state.Version + 1,
+                HasAudio: true,
+                MessageId: messageId,
+                SegmentIndex: segmentIndex,
+                SegmentCount: segmentCount
+            );
+
+            _audioByVersion[next.Version] = audio;
             _state = next;
+            TrimAudioHistory(next.Version);
+            return true;
         }
     }
 
@@ -68,8 +112,21 @@ public sealed class CharacterStateService
                 Emotion: "neutral",
                 Intensity: 0.5f,
                 Version: _state.Version + 1,
-                HasAudio: false
+                HasAudio: false,
+                MessageId: ++_lastMessageId,
+                SegmentIndex: 0,
+                SegmentCount: 0
             );
+        }
+    }
+
+    private void TrimAudioHistory(long currentVersion)
+    {
+        // Keep enough completed segments for Unity's polling/downloading queue.
+        long oldestVersion = currentVersion - 16;
+        foreach (long version in _audioByVersion.Keys.Where(v => v < oldestVersion).ToArray())
+        {
+            _audioByVersion.Remove(version);
         }
     }
 }

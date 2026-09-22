@@ -123,7 +123,19 @@ app.MapPost(
 
                 if (!responseTask.IsCompleted && waitingAudio is { Length: > 0 })
                 {
-                    stateService.SetResponse(waitingLine, "neutral", 0.4f, waitingAudio);
+                    long waitingMessageId = stateService.BeginResponse(
+                        waitingLine,
+                        "neutral",
+                        0.4f,
+                        segmentCount: 1);
+                    stateService.PublishAudioSegment(
+                        waitingMessageId,
+                        waitingLine,
+                        "neutral",
+                        0.4f,
+                        segmentIndex: 0,
+                        segmentCount: 1,
+                        audio: waitingAudio);
                     await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
                 }
             }
@@ -151,51 +163,68 @@ app.MapPost(
             );
         }
 
-        byte[]? audio = null;
-
-        // ---------------------------------
-        // 2. GPT-SoVITS 음성 생성
-        // ---------------------------------
-
-        try
-        {
-            audio =
-                await ttsService.GenerateAsync(
-                    response.Text,
-                    cancellationToken
-                );
-
-            logger.LogInformation(
-                "TTS 생성 성공: {Bytes} bytes",
-                audio.Length
-            );
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // TTS가 실패해도 채팅 자체는 정상 동작하게 한다.
-            logger.LogWarning(
-                ex,
-                "GPT-SoVITS TTS 생성 실패"
-            );
-        }
-
-        // ---------------------------------
-        // 3. Unity 상태 갱신
-        // ---------------------------------
-        //
-        stateService.SetResponse(
+        IReadOnlyList<string> segments = TtsTextSegmenter.Split(response.Text);
+        long messageId = stateService.BeginResponse(
             response.Text,
             response.Emotion,
             response.Intensity,
-            audio
-        );
+            segments.Count);
 
         // ---------------------------------
-        // 4. Browser Chat UI 응답
+        // 2. GPT-SoVITS 음성을 어구별로 순차 생성한다.
+        //    각 조각은 완성되는 즉시 Unity에 공개된다.
+        // ---------------------------------
+        for (int index = 0; index < segments.Count; index++)
+        {
+            string segment = segments[index];
+
+            try
+            {
+                byte[] audio = await ttsService.GenerateAsync(
+                    segment,
+                    cancellationToken);
+
+                bool published = stateService.PublishAudioSegment(
+                    messageId,
+                    response.Text,
+                    response.Emotion,
+                    response.Intensity,
+                    index,
+                    segments.Count,
+                    audio);
+
+                logger.LogInformation(
+                    "TTS 조각 생성 성공: {Current}/{Total}, {Bytes} bytes, Published: {Published}, Text: {Text}",
+                    index + 1,
+                    segments.Count,
+                    audio.Length,
+                    published,
+                    segment);
+
+                if (!published)
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // TTS가 실패해도 채팅 자체는 정상 동작하게 한다.
+                logger.LogWarning(
+                    ex,
+                    "GPT-SoVITS TTS 조각 생성 실패: {Current}/{Total}, Text: {Text}",
+                    index + 1,
+                    segments.Count,
+                    segment);
+                break;
+            }
+        }
+
+        // ---------------------------------
+        // 3. Browser Chat UI 응답
         // ---------------------------------
 
         return Results.Ok(

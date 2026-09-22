@@ -5,5 +5,8 @@ public sealed record CharacterState(
     string Emotion,
     float Intensity,
     long Version,
-    bool HasAudio
+    bool HasAudio,
+    long MessageId,
+    int SegmentIndex,
+    int SegmentCount
 );

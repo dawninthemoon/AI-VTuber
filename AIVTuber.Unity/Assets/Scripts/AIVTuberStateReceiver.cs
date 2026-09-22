@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Networking;
 using TMPro;
@@ -32,8 +33,12 @@ public class AIVTuberStateReceiver : MonoBehaviour
     private TMP_Text subtitleText;
 
     private long lastVersion = -1;
+    private long activeMessageId = -1;
 
-    private Coroutine voiceCoroutine;
+    private readonly List<Coroutine> voiceCoroutines =
+        new List<Coroutine>();
+    private readonly Queue<AudioClip> voiceQueue =
+        new Queue<AudioClip>();
     private AudioClip downloadedClip;
 
 
@@ -70,6 +75,38 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
         StartCoroutine(
             PollState()
+        );
+    }
+
+
+    private void Update()
+    {
+        if (audioSource == null || audioSource.isPlaying)
+        {
+            return;
+        }
+
+        if (downloadedClip != null)
+        {
+            Destroy(downloadedClip);
+            downloadedClip = null;
+        }
+
+        if (voiceQueue.Count == 0)
+        {
+            if (lipSyncController != null)
+            {
+                lipSyncController.StopSpeaking();
+            }
+
+            return;
+        }
+
+        downloadedClip = voiceQueue.Dequeue();
+        audioSource.clip = downloadedClip;
+        audioSource.Play();
+        Debug.Log(
+            $"TTS 큐 재생 시작. 남은 조각={voiceQueue.Count}"
         );
     }
 
@@ -169,6 +206,11 @@ public class AIVTuberStateReceiver : MonoBehaviour
             $"Version: {state.version}"
         );
 
+        Debug.Log(
+            $"TTS Segment: {state.segmentIndex + 1}/{state.segmentCount}, " +
+            $"Message: {state.messageId}"
+        );
+
 
         // ------------------------
         // Subtitle
@@ -198,32 +240,34 @@ public class AIVTuberStateReceiver : MonoBehaviour
         // TTS Voice
         // ------------------------
 
-        if (voiceCoroutine != null)
-        {
-            StopCoroutine(
-                voiceCoroutine
-            );
-        }
+        bool isNewMessage =
+            state.messageId != activeMessageId;
 
-        StopVoice();
+        if (isNewMessage)
+        {
+            StopVoiceDownloads();
+            StopVoice();
+            activeMessageId = state.messageId;
+        }
 
         if (string.IsNullOrWhiteSpace(state.text) || !state.hasAudio)
         {
-            voiceCoroutine = null;
             return;
         }
 
-        voiceCoroutine =
-            StartCoroutine(
-                PlayVoice(
-                    state.version
-                )
-            );
+        Coroutine coroutine = StartCoroutine(
+            DownloadVoiceSegment(
+                state.version,
+                state.messageId
+            )
+        );
+        voiceCoroutines.Add(coroutine);
     }
 
 
-    private IEnumerator PlayVoice(
-        long version)
+    private IEnumerator DownloadVoiceSegment(
+        long version,
+        long messageId)
     {
         if (audioSource == null)
         {
@@ -244,7 +288,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
         request.SetRequestHeader("Cache-Control", "no-cache");
         yield return request.SendWebRequest();
 
-        if (version != lastVersion)
+        if (messageId != activeMessageId)
         {
             yield break;
         }
@@ -253,7 +297,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
         {
             Debug.LogWarning(
                 $"TTS download failed: {request.responseCode} {request.error} URL={url}");
-            voiceCoroutine = null;
             yield break;
         }
 
@@ -261,15 +304,13 @@ public class AIVTuberStateReceiver : MonoBehaviour
         if (clip == null)
         {
             Debug.LogWarning($"TTS AudioClip 생성 실패. version={version}");
-            voiceCoroutine = null;
             yield break;
         }
 
-        downloadedClip = clip;
-        audioSource.clip = clip;
-        audioSource.Play();
-        Debug.Log($"TTS 재생 시작. version={version}");
-        voiceCoroutine = null;
+        voiceQueue.Enqueue(clip);
+        Debug.Log(
+            $"TTS 조각 큐 추가. version={version}, 대기={voiceQueue.Count}"
+        );
     }
 
     private void StopVoice()
@@ -286,19 +327,37 @@ public class AIVTuberStateReceiver : MonoBehaviour
             downloadedClip = null;
         }
 
+        while (voiceQueue.Count > 0)
+        {
+            AudioClip queuedClip = voiceQueue.Dequeue();
+            if (queuedClip != null)
+            {
+                Destroy(queuedClip);
+            }
+        }
+
         if (lipSyncController != null)
         {
             lipSyncController.StopSpeaking();
         }
     }
 
-    private void OnDestroy()
+    private void StopVoiceDownloads()
     {
-        if (voiceCoroutine != null)
+        foreach (Coroutine coroutine in voiceCoroutines)
         {
-            StopCoroutine(voiceCoroutine);
+            if (coroutine != null)
+            {
+                StopCoroutine(coroutine);
+            }
         }
 
+        voiceCoroutines.Clear();
+    }
+
+    private void OnDestroy()
+    {
+        StopVoiceDownloads();
         StopVoice();
     }
 
@@ -311,5 +370,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
         public float intensity;
         public long version;
         public bool hasAudio;
+        public long messageId;
+        public int segmentIndex;
+        public int segmentCount;
     }
 }
