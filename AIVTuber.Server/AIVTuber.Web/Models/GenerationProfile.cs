@@ -5,5 +5,6 @@ public sealed record GenerationProfile(
     bool Think,
     int NumPredict,
     double Temperature,
-    int MaxHistoryMessages
+    int MaxHistoryMessages,
+    bool NeedsSearch = false
 );

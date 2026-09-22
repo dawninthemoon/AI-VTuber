@@ -69,6 +69,22 @@ async function sendMessage() {
 
         thinkingBubble.textContent = aiText;
 
+        if (Array.isArray(result.sources) && result.sources.length > 0) {
+            const sources = document.createElement("div");
+            sources.classList.add("sources");
+
+            for (const source of result.sources) {
+                const link = document.createElement("a");
+                link.href = source.url;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.textContent = source.title;
+                sources.appendChild(link);
+            }
+
+            thinkingBubble.appendChild(sources);
+        }
+
         //speak(aiText);
 
         scrollToBottom();

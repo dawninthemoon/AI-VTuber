@@ -5,7 +5,7 @@ namespace AIVTuber.Web.Services;
 public sealed class CharacterStateService
 {
     private readonly object _lock = new();
-    private byte[]? _audio;
+    private readonly Dictionary<long, byte[]> _audioByVersion = [];
 
     private CharacterState _state =
         new(
@@ -31,13 +31,20 @@ public sealed class CharacterStateService
     {
         lock (_lock)
         {
-            _audio = audio;
-            _state = new CharacterState(
+            CharacterState next = new(
                 Text: text,
                 Emotion: emotion,
                 Intensity: intensity,
                 Version: _state.Version + 1
             );
+
+            if (audio is { Length: > 0 })
+            {
+                _audioByVersion[next.Version] = audio;
+            }
+
+            _audioByVersion.Remove(next.Version - 2);
+            _state = next;
         }
     }
 
@@ -45,7 +52,7 @@ public sealed class CharacterStateService
     {
         lock (_lock)
         {
-            return _state.Version == version ? _audio : null;
+            return _audioByVersion.GetValueOrDefault(version);
         }
     }
 
@@ -53,7 +60,7 @@ public sealed class CharacterStateService
     {
         lock (_lock)
         {
-            _audio = null;
+            _audioByVersion.Clear();
             _state = new CharacterState(
                 Text: "",
                 Emotion: "neutral",

@@ -16,9 +16,24 @@ public sealed class OllamaChatRequest
     [JsonPropertyName("stream")]
     public bool Stream { get; init; }
 
-    // Ollama에게 JSON만 반환하도록 요청
+    // Restrict the spoken response to the fields Unity consumes.
     [JsonPropertyName("format")]
-    public string Format { get; init; } = "json";
+    public object Format { get; init; } = new
+    {
+        type = "object",
+        properties = new
+        {
+            text = new { type = "string" },
+            emotion = new
+            {
+                type = "string",
+                @enum = new[] { "neutral", "happy", "angry", "sad", "surprised" }
+            },
+            intensity = new { type = "number", minimum = 0, maximum = 1 }
+        },
+        required = new[] { "text", "emotion", "intensity" },
+        additionalProperties = false
+    };
 
     [JsonPropertyName("options")]
     public OllamaGenerationOptions Options { get; init; } = new();

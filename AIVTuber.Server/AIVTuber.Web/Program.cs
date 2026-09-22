@@ -18,6 +18,7 @@ builder.Services.Configure<OllamaOptions>(
 builder.Services.AddHttpClient<OllamaService>();
 
 builder.Services.AddHttpClient<GPTSoVitsTtsService>();
+builder.Services.AddHttpClient<WikipediaSearchService>();
 
 // -----------------------------
 // Application Services
@@ -49,6 +50,8 @@ app.MapPost(
     async (
         ChatRequest request,
         ChatService chatService,
+        ChatClassifier classifier,
+        WikipediaSearchService searchService,
         CharacterStateService stateService,
         GPTSoVitsTtsService ttsService,
         ILogger<Program> logger,
@@ -65,19 +68,72 @@ app.MapPost(
             );
         }
 
-        // ---------------------------------
-        // 1. Ollama에서 AI 응답 생성
-        // ---------------------------------
+        GenerationProfile profile = classifier.Classify(request.Message);
+        SearchEvidence? evidence = null;
+
+        async Task<AICharacterResponse> GenerateResponseAsync()
+        {
+            if (profile.NeedsSearch)
+            {
+                try
+                {
+                    evidence = await searchService.SearchAsync(request.Message, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "사실 검색 실패");
+                    evidence = new SearchEvidence([]);
+                }
+            }
+
+            return await chatService.SendAsync(request.Message, evidence, cancellationToken);
+        }
+
+        Task<AICharacterResponse> responseTask = GenerateResponseAsync();
+
+        if (profile.NeedsSearch)
+        {
+            await Task.WhenAny(
+                responseTask,
+                Task.Delay(TimeSpan.FromSeconds(1.2), cancellationToken));
+
+            if (!responseTask.IsCompleted)
+            {
+                string waitingLine = evidence == null
+                    ? "잠시만, 찾아볼게."
+                    : "생각 좀 해볼게.";
+                byte[]? waitingAudio = null;
+
+                try
+                {
+                    waitingAudio = await ttsService.GenerateAsync(waitingLine, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "검색 안내 음성 생성 실패");
+                }
+
+                if (!responseTask.IsCompleted && waitingAudio is { Length: > 0 })
+                {
+                    stateService.SetResponse(waitingLine, "neutral", 0.4f, waitingAudio);
+                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                }
+            }
+        }
 
         AICharacterResponse response;
 
         try
         {
-            response =
-                await chatService.SendAsync(
-                    request.Message,
-                    cancellationToken
-                );
+            response = await responseTask;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -144,7 +200,8 @@ app.MapPost(
 
         return Results.Ok(
             new ChatResponse(
-                response.Text
+                response.Text,
+                evidence?.Hits
             )
         );
     }

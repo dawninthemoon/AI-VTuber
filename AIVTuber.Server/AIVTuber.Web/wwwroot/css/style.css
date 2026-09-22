@@ -74,6 +74,18 @@ body {
     color: #c8c8c8;
 }
 
+.sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+.sources a {
+    color: #93c5fd;
+}
+
 .input-area {
     flex: 0 0 auto;
     display: flex;

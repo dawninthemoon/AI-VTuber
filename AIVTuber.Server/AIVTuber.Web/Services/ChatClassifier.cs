@@ -46,6 +46,12 @@ public sealed class ChatClassifier
         "정의"
     };
 
+    private static readonly string[] SearchKeywords =
+    {
+        "최신", "최근", "오늘", "지금", "현재", "올해", "뉴스", "가격", "시세",
+        "태어", "언제", "몇", "누구", "멤버", "출시", "발매", "작곡", "작사"
+    };
+
     private static readonly string[] CasualKeywords =
     {
         "안녕",
@@ -78,18 +84,21 @@ public sealed class ChatClassifier
 
         // 분석/추론 요청
         if (ContainsAny(text, ThinkKeywords))
-            return Think();
+            return Think(ContainsAny(text, SearchKeywords));
 
         // 사실 확인 질문
         if (ContainsAny(text, FactKeywords))
             return Fact();
 
+        if (ContainsAny(text, SearchKeywords))
+            return Fact();
+
         // 긴 입력은 사고가 필요할 가능성이 높음
         if (text.Length >= 60)
-            return Think();
+            return Think(ContainsAny(text, SearchKeywords));
 
         // 일반적인 짧은 질문
-        if (text.Contains('?'))
+        if (text.Contains('?') && ContainsAny(text, SearchKeywords))
             return Fact();
 
         return Chat();
@@ -120,8 +129,8 @@ public sealed class ChatClassifier
         return new GenerationProfile(
             ChatMode.Chat,
             Think: false,
-            NumPredict: 80,
-            Temperature: 0.8,
+            NumPredict: 70,
+            Temperature: 0.7,
             MaxHistoryMessages: 8
         );
     }
@@ -133,18 +142,20 @@ public sealed class ChatClassifier
             Think: false,
             NumPredict: 120,
             Temperature: 0.2,
-            MaxHistoryMessages: 12
+            MaxHistoryMessages: 12,
+            NeedsSearch: true
         );
     }
 
-    private static GenerationProfile Think()
+    private static GenerationProfile Think(bool needsSearch)
     {
         return new GenerationProfile(
             ChatMode.Think,
             Think: true,
             NumPredict: 300,
             Temperature: 0.55,
-            MaxHistoryMessages: 20
+            MaxHistoryMessages: 20,
+            NeedsSearch: needsSearch
         );
     }
 }
