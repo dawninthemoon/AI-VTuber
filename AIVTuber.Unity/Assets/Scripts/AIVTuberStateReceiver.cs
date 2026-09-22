@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.Networking;
+using TMPro;
 
 public class AIVTuberStateReceiver : MonoBehaviour
 {
@@ -16,6 +17,12 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     [SerializeField]
     private Live2DEmotionController emotionController;
+
+    [SerializeField]
+    private Live2DLipSyncController lipSyncController;
+
+    [SerializeField]
+    private TMP_Text subtitleText;
 
     private long lastVersion = -1;
 
@@ -71,12 +78,22 @@ public class AIVTuberStateReceiver : MonoBehaviour
         Debug.Log($"Emotion: {state.emotion}");
         Debug.Log($"Intensity: {state.intensity}");
 
+        if (subtitleText != null)
+        {
+            subtitleText.text = state.text;
+        }
+
         if (emotionController != null)
         {
             emotionController.SetEmotion(
                 state.emotion,
                 state.intensity
             );
+        }
+
+        if (lipSyncController != null)
+        {
+            lipSyncController.Speak(state.text);
         }
     }
 
