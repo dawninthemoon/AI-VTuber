@@ -22,6 +22,9 @@ public class AIVTuberStateReceiver : MonoBehaviour
     private Live2DLipSyncController lipSyncController;
 
     [SerializeField]
+    private AudioSource audioSource;
+
+    [SerializeField]
     private TMP_Text subtitleText;
 
     private long lastVersion = -1;
@@ -95,6 +98,47 @@ public class AIVTuberStateReceiver : MonoBehaviour
         {
             lipSyncController.Speak(state.text);
         }
+
+        /*
+        StartCoroutine(
+          PlayVoice(state.version)
+        );
+        */
+    }
+
+    private IEnumerator PlayVoice(
+        long version)
+    {
+        string url =
+            $"http://localhost:5000/unity/audio?version={version}";
+
+        using UnityWebRequest request =
+            UnityWebRequestMultimedia.GetAudioClip(
+                url,
+                AudioType.MPEG
+            );
+
+        yield return request.SendWebRequest();
+
+        if (
+            request.result !=
+            UnityWebRequest.Result.Success
+        )
+        {
+            Debug.LogWarning(
+                $"TTS download failed: {request.error}"
+            );
+
+            yield break;
+        }
+
+        AudioClip clip =
+            DownloadHandlerAudioClip.GetContent(
+                request
+            );
+
+        audioSource.clip = clip;
+        audioSource.Play();
     }
 
     [System.Serializable]

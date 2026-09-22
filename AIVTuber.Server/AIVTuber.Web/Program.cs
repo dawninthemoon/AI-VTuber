@@ -7,6 +7,9 @@ builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection("Ollama"));
 
 builder.Services.AddHttpClient<OllamaService>();
+builder.Services.AddHttpClient<ElevenLabsTtsService>();
+
+builder.Services.AddSingleton<CharacterAudioService>();
 builder.Services.AddSingleton<ChatClassifier>();
 builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<CharacterStateService>();
@@ -20,6 +23,8 @@ app.MapPost("/chat", async (
     ChatRequest request,
     ChatService chatService,
     CharacterStateService stateService,
+    ElevenLabsTtsService ttsService,
+    CharacterAudioService audioService,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.Message))
@@ -74,5 +79,35 @@ app.MapGet("/unity/state", (
 {
     return Results.Ok(stateService.Get());
 });
+
+app.MapGet(
+    "/unity/audio",
+    (
+        CharacterAudioService audioService,
+        long? version
+    ) =>
+    {
+        var result =
+            audioService.Get();
+
+        if (result.Audio == null)
+        {
+            return Results.NotFound();
+        }
+
+        if (
+            version.HasValue &&
+            result.Version != version.Value
+        )
+        {
+            return Results.NotFound();
+        }
+
+        return Results.File(
+            result.Audio,
+            "audio/mpeg"
+        );
+    }
+);
 
 app.Run();
