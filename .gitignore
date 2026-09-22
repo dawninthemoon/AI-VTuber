@@ -13,3 +13,5 @@ UserSettings/
 .idea/
 
 AIVTuber.Server/AIVTuber.Web/Models/sherpa-onnx-supertonic-*/
+
+Resources/*.wav

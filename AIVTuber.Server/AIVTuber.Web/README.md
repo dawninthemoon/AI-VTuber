@@ -17,7 +17,7 @@
 
 ## 실행
 
-Supertonic 3 모델을 최초 한 번 다운로드합니다.
+Supertonic 3를 다시 사용할 경우 모델을 최초 한 번 다운로드합니다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Scripts\download-supertonic.ps1
