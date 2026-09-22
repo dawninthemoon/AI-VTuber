@@ -17,7 +17,6 @@ public class Live2DEmotionController : MonoBehaviour
     private CubismParameter browRForm;
 
     private CubismParameter mouthForm;
-    private CubismParameter mouthOpen;
 
     private CubismParameter eyeLOpen;
     private CubismParameter eyeROpen;
@@ -56,10 +55,6 @@ public class Live2DEmotionController : MonoBehaviour
 
                 case "ParamMouthForm":
                     mouthForm = parameter;
-                    break;
-
-                case "ParamMouthOpenY":
-                    mouthOpen = parameter;
                     break;
 
                 case "ParamEyeLOpen":
@@ -142,11 +137,6 @@ public class Live2DEmotionController : MonoBehaviour
                 SetValue(
                     eyeROpen,
                     Mathf.Lerp(1f, 1.5f, intensity)
-                );
-
-                SetValue(
-                    mouthOpen,
-                    intensity
                 );
 
                 break;

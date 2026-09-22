@@ -1,19 +1,26 @@
-using System.Collections;
-using UnityEngine;
 using Live2D.Cubism.Core;
+using UnityEngine;
 
+[DefaultExecutionOrder(100)]
 public class Live2DLipSyncController : MonoBehaviour
 {
-    [SerializeField]
-    private CubismModel model;
+    [SerializeField] private CubismModel model;
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField, Range(0f, 0.2f)] private float noiseFloor = 0.015f;
+    [SerializeField, Range(1f, 30f)] private float sensitivity = 12f;
+    [SerializeField, Min(0.01f)] private float attackTime = 0.04f;
+    [SerializeField, Min(0.01f)] private float releaseTime = 0.12f;
 
-    [SerializeField]
-    private float speed = 12f;
-
+    private readonly float[] samples = new float[256];
     private CubismParameter mouthOpen;
+    private float opening;
 
-    private Coroutine speakingCoroutine;
-    public bool IsSpeaking => speakingCoroutine != null;
+    public bool IsSpeaking => audioSource != null && audioSource.isPlaying;
+
+    public void SetAudioSource(AudioSource source)
+    {
+        audioSource = source;
+    }
 
     private void Awake()
     {
@@ -22,7 +29,14 @@ public class Live2DLipSyncController : MonoBehaviour
             model = GetComponent<CubismModel>();
         }
 
-        foreach (var parameter in model.Parameters)
+        if (model == null)
+        {
+            Debug.LogError("Lip sync requires a CubismModel.", this);
+            enabled = false;
+            return;
+        }
+
+        foreach (CubismParameter parameter in model.Parameters)
         {
             if (parameter.Id == "ParamMouthOpenY")
             {
@@ -32,31 +46,40 @@ public class Live2DLipSyncController : MonoBehaviour
         }
     }
 
-    public void Speak(string text)
+    private void LateUpdate()
     {
-        if (string.IsNullOrWhiteSpace(text))
+        float target = 0f;
+
+        if (IsSpeaking)
         {
-            StopSpeaking();
-            return;
+            audioSource.GetOutputData(samples, 0);
+
+            float sum = 0f;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                sum += samples[i] * samples[i];
+            }
+
+            float rms = Mathf.Sqrt(sum / samples.Length);
+            target = Mathf.Clamp01((rms - noiseFloor) * sensitivity);
         }
 
-        if (speakingCoroutine != null)
-        {
-            StopCoroutine(speakingCoroutine);
-        }
+        float smoothTime = target > opening ? attackTime : releaseTime;
+        float blend = 1f - Mathf.Exp(-Time.deltaTime / smoothTime);
+        opening = Mathf.Lerp(opening, target, blend);
 
-        speakingCoroutine =
-            StartCoroutine(SpeakRoutine(text));
+        if (mouthOpen != null)
+        {
+            mouthOpen.Value = Mathf.Lerp(
+                mouthOpen.MinimumValue,
+                mouthOpen.MaximumValue,
+                opening);
+        }
     }
 
     public void StopSpeaking()
     {
-        if (speakingCoroutine != null)
-        {
-            StopCoroutine(speakingCoroutine);
-            speakingCoroutine = null;
-        }
-
+        opening = 0f;
         if (mouthOpen != null)
         {
             mouthOpen.Value = 0f;
@@ -66,43 +89,5 @@ public class Live2DLipSyncController : MonoBehaviour
     private void OnDisable()
     {
         StopSpeaking();
-    }
-
-    private IEnumerator SpeakRoutine(string text)
-    {
-        // 한글 대사 길이로 임시 발화시간 추정
-        float duration =
-            Mathf.Clamp(
-                text.Length * 0.07f,
-                0.5f,
-                8f
-            );
-
-        float elapsed = 0f;
-
-        while (elapsed < duration)
-        {
-            elapsed += Time.deltaTime;
-
-            // 0~1 사이에서 입을 반복적으로 열고 닫음
-            float mouth =
-                (Mathf.Sin(
-                    elapsed * speed
-                ) + 1f) * 0.5f;
-
-            if (mouthOpen != null)
-            {
-                mouthOpen.Value = mouth;
-            }
-
-            yield return null;
-        }
-
-        if (mouthOpen != null)
-        {
-            mouthOpen.Value = 0f;
-        }
-
-        speakingCoroutine = null;
     }
 }

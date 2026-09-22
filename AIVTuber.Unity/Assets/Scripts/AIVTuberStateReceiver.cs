@@ -34,6 +34,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
     private long lastVersion = -1;
 
     private Coroutine voiceCoroutine;
+    private AudioClip downloadedClip;
 
 
     private string StateUrl =>
@@ -48,6 +49,11 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     private void Start()
     {
+        if (lipSyncController != null)
+        {
+            lipSyncController.SetAudioSource(audioSource);
+        }
+
         if (subtitleText != null)
         {
             subtitleText.text =
@@ -189,31 +195,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
 
         // ------------------------
-        // Lip Sync
-        // ------------------------
-
-        if (lipSyncController != null)
-        {
-            if (
-                string.IsNullOrWhiteSpace(
-                    state.text
-                )
-            )
-            {
-                lipSyncController
-                    .StopSpeaking();
-            }
-            else
-            {
-                lipSyncController
-                    .Speak(
-                        state.text
-                    );
-            }
-        }
-
-
-        // ------------------------
         // TTS Voice
         // ------------------------
 
@@ -222,6 +203,14 @@ public class AIVTuberStateReceiver : MonoBehaviour
             StopCoroutine(
                 voiceCoroutine
             );
+        }
+
+        StopVoice();
+
+        if (string.IsNullOrWhiteSpace(state.text))
+        {
+            voiceCoroutine = null;
+            return;
         }
 
         voiceCoroutine =
@@ -250,116 +239,67 @@ public class AIVTuberStateReceiver : MonoBehaviour
                 version
             );
 
-        // 혹시 서버에서 WAV 저장과
-        // state 갱신 사이에 미세한 타이밍 차이가
-        // 생길 경우를 대비한다.
-        const int maxRetries = 20;
-        const float retryDelay = 0.15f;
+        using UnityWebRequest request =
+            UnityWebRequestMultimedia.GetAudioClip(url, AudioType.WAV);
+        request.SetRequestHeader("Cache-Control", "no-cache");
+        yield return request.SendWebRequest();
 
-
-        for (
-            int attempt = 0;
-            attempt < maxRetries;
-            attempt++
-        )
+        if (version != lastVersion)
         {
-            using UnityWebRequest request =
-                UnityWebRequestMultimedia
-                    .GetAudioClip(
-                        url,
-                        AudioType.WAV
-                    );
-
-            request.SetRequestHeader(
-                "Cache-Control",
-                "no-cache"
-            );
-
-            yield return
-                request.SendWebRequest();
-
-
-            if (
-                request.result ==
-                UnityWebRequest.Result.Success
-            )
-            {
-                AudioClip clip =
-                    DownloadHandlerAudioClip
-                        .GetContent(
-                            request
-                        );
-
-                if (clip == null)
-                {
-                    Debug.LogWarning(
-                        $"TTS AudioClip 생성 실패. version={version}"
-                    );
-
-                    yield break;
-                }
-
-
-                if (audioSource.isPlaying)
-                {
-                    audioSource.Stop();
-                }
-
-
-                audioSource.clip =
-                    clip;
-
-                audioSource.Play();
-
-
-                Debug.Log(
-                    $"TTS 재생 시작. version={version}"
-                );
-
-                voiceCoroutine =
-                    null;
-
-                yield break;
-            }
-
-
-            // TTS 오디오가 아직 준비되지 않았으면
-            // 잠깐 기다렸다 다시 요청
-            if (
-                request.responseCode ==
-                404
-            )
-            {
-                yield return
-                    new WaitForSeconds(
-                        retryDelay
-                    );
-
-                continue;
-            }
-
-
-            Debug.LogWarning(
-                $"TTS download failed: " +
-                $"{request.responseCode} " +
-                $"{request.error} " +
-                $"URL={url}"
-            );
-
-            voiceCoroutine =
-                null;
-
             yield break;
         }
 
+        if (request.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogWarning(
+                $"TTS download failed: {request.responseCode} {request.error} URL={url}");
+            voiceCoroutine = null;
+            yield break;
+        }
 
-        Debug.LogWarning(
-            $"TTS audio not found after retry. " +
-            $"version={version}"
-        );
+        AudioClip clip = DownloadHandlerAudioClip.GetContent(request);
+        if (clip == null)
+        {
+            Debug.LogWarning($"TTS AudioClip 생성 실패. version={version}");
+            voiceCoroutine = null;
+            yield break;
+        }
 
-        voiceCoroutine =
-            null;
+        downloadedClip = clip;
+        audioSource.clip = clip;
+        audioSource.Play();
+        Debug.Log($"TTS 재생 시작. version={version}");
+        voiceCoroutine = null;
+    }
+
+    private void StopVoice()
+    {
+        if (audioSource != null)
+        {
+            audioSource.Stop();
+            audioSource.clip = null;
+        }
+
+        if (downloadedClip != null)
+        {
+            Destroy(downloadedClip);
+            downloadedClip = null;
+        }
+
+        if (lipSyncController != null)
+        {
+            lipSyncController.StopSpeaking();
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (voiceCoroutine != null)
+        {
+            StopCoroutine(voiceCoroutine);
+        }
+
+        StopVoice();
     }
 
 

@@ -5499,7 +5499,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   model: {fileID: 668281308}
-  speed: 12
+  audioSource: {fileID: 1889475088}
+  noiseFloor: 0.015
+  sensitivity: 12
+  attackTime: 0.04
+  releaseTime: 0.12
 --- !u!4 &688576162
 Transform:
   m_ObjectHideFlags: 0
