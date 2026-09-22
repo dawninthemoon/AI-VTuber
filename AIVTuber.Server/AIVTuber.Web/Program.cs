@@ -74,11 +74,15 @@ app.MapPost("/chat/reset", (
     return Results.NoContent();
 });
 
-app.MapGet("/unity/state", (
-    CharacterStateService stateService) =>
-{
-    return Results.Ok(stateService.Get());
-});
+app.MapGet(
+    "/unity/state",
+    (CharacterStateService stateService) =>
+    {
+        return Results.Ok(
+            stateService.Get()
+        );
+    }
+);
 
 app.MapGet(
     "/unity/audio",

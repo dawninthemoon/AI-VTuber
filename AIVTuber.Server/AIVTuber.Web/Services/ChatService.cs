@@ -38,15 +38,27 @@ public sealed class ChatService
         Reset();
     }
 
-
     public async Task<AICharacterResponse> SendAsync(
         string userMessage,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(userMessage))
+        {
+            return new AICharacterResponse
+            {
+                Text = "뭐라도 말해봐ㅋㅋ",
+                Emotion = "neutral",
+                Intensity = 0.4f
+            };
+        }
+
         await _lock.WaitAsync(cancellationToken);
 
         try
         {
+            userMessage = userMessage.Trim();
+
+            // 1. 사용자 메시지 저장
             _history.Add(
                 new ChatMessage(
                     "user",
@@ -54,20 +66,27 @@ public sealed class ChatService
                 )
             );
 
-            var profile =
+            // 2. CHAT / FACT / THINK 분류
+            GenerationProfile profile =
                 _classifier.Classify(userMessage);
 
             _logger.LogInformation(
-                "Chat mode: {Mode}, Think: {Think}, NumPredict: {NumPredict}",
+                "Chat mode: {Mode}, Think: {Think}, NumPredict: {NumPredict}, Temperature: {Temperature}, History: {History}",
                 profile.Mode,
                 profile.Think,
-                profile.NumPredict
+                profile.NumPredict,
+                profile.Temperature,
+                profile.MaxHistoryMessages
             );
 
-            var context = BuildContext();
+            // 3. 모드에 맞는 길이만큼 대화 기록 구성
+            var context =
+                BuildContext(
+                    profile.MaxHistoryMessages
+                );
 
-            // Ollama가 반환한 raw JSON 문자열
-            var rawResponse =
+            // 4. Ollama 호출
+            string rawResponse =
                 await _ollamaService.ChatAsync(
                     context,
                     profile,
@@ -76,6 +95,7 @@ public sealed class ChatService
 
             AICharacterResponse? result = null;
 
+            // 5. JSON 응답 파싱
             try
             {
                 result =
@@ -96,24 +116,25 @@ public sealed class ChatService
                 );
             }
 
-
-            // JSON 파싱 실패 대비
+            // 6. JSON 형식이 깨졌을 때 fallback
             if (result == null ||
                 string.IsNullOrWhiteSpace(result.Text))
             {
                 result = new AICharacterResponse
                 {
-                    Text = string.IsNullOrWhiteSpace(rawResponse)
-                        ? "잠깐, 방금 머리가 멈췄어."
-                        : rawResponse,
+                    Text =
+                        string.IsNullOrWhiteSpace(rawResponse)
+                            ? "잠깐, 방금 머리가 멈췄어."
+                            : rawResponse,
 
                     Emotion = "neutral",
                     Intensity = 0.5f
                 };
             }
 
+            // 7. 결과 정리
+            result.Text = result.Text.Trim();
 
-            // 값 보정
             result.Intensity =
                 Math.Clamp(
                     result.Intensity,
@@ -126,8 +147,8 @@ public sealed class ChatService
                     result.Emotion
                 );
 
-
-            // 히스토리에는 사람이 보는 실제 대사만 넣음
+            // 8. 히스토리에는 JSON 전체가 아니라
+            // 실제 캐릭터 대사만 저장
             _history.Add(
                 new ChatMessage(
                     "assistant",
@@ -135,7 +156,8 @@ public sealed class ChatService
                 )
             );
 
-            TrimHistory();
+            // 메모리가 계속 커지는 것 방지
+            TrimStoredHistory();
 
             return result;
         }
@@ -145,10 +167,54 @@ public sealed class ChatService
         }
     }
 
+    private IReadOnlyList<ChatMessage> BuildContext(
+        int maxHistoryMessages)
+    {
+        // _history[0]은 항상 system prompt
+        if (_history.Count == 0)
+        {
+            return
+            [
+                new ChatMessage(
+                    "system",
+                    _systemPrompt
+                )
+            ];
+        }
+
+        // system prompt 제외한 실제 대화
+        var conversation =
+            _history
+                .Skip(1)
+                .ToList();
+
+        // 현재 profile에서 허용하는 최근 메시지만 선택
+        var recentConversation =
+            conversation
+                .TakeLast(maxHistoryMessages)
+                .ToList();
+
+        var context =
+            new List<ChatMessage>
+            {
+                _history[0]
+            };
+
+        context.AddRange(
+            recentConversation
+        );
+
+        return context;
+    }
 
     private static string NormalizeEmotion(
-        string emotion)
+        string? emotion)
     {
+        if (string.IsNullOrWhiteSpace(emotion))
+        {
+            return "neutral";
+        }
+
         return emotion
             .Trim()
             .ToLowerInvariant()
@@ -164,7 +230,6 @@ public sealed class ChatService
             };
     }
 
-
     public void Reset()
     {
         _history.Clear();
@@ -175,66 +240,46 @@ public sealed class ChatService
                 _systemPrompt
             )
         );
-    }
 
-
-    private IReadOnlyList<ChatMessage>
-        BuildContext()
-    {
-        if (_history.Count <=
-            _options.MaxHistoryMessages + 1)
-        {
-            return _history.ToList();
-        }
-
-        var recent =
-            _history
-                .Skip(
-                    Math.Max(
-                        1,
-                        _history.Count -
-                        _options.MaxHistoryMessages
-                    )
-                )
-                .ToList();
-
-        recent.Insert(
-            0,
-            _history[0]
+        _logger.LogInformation(
+            "Chat history reset."
         );
-
-        return recent;
     }
 
-
-    private void TrimHistory()
+    private void TrimStoredHistory()
     {
-        var maxStored =
+        // profile별 context 크기와 별개로
+        // 서버 메모리에는 어느 정도 넉넉하게 보관한다.
+        int maxStoredMessages =
             Math.Max(
                 _options.MaxHistoryMessages * 2,
-                _options.MaxHistoryMessages + 1
+                40
             );
 
-        if (_history.Count <= maxStored)
+        // +1은 system prompt
+        if (_history.Count <=
+            maxStoredMessages + 1)
         {
             return;
         }
 
-        var system =
+        ChatMessage systemMessage =
             _history[0];
 
         var recent =
             _history
-                .Skip(
-                    _history.Count -
-                    _options.MaxHistoryMessages
-                )
+                .Skip(1)
+                .TakeLast(maxStoredMessages)
                 .ToList();
 
         _history.Clear();
 
-        _history.Add(system);
+        _history.Add(
+            systemMessage
+        );
 
-        _history.AddRange(recent);
+        _history.AddRange(
+            recent
+        );
     }
 }

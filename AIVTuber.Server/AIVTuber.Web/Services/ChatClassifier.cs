@@ -6,94 +6,145 @@ public sealed class ChatClassifier
 {
     private static readonly string[] ThinkKeywords =
     {
+        "왜",
+        "이유",
         "분석",
         "비교",
+        "설계",
+        "어떻게 해야",
         "장단점",
-        "이유를 설명",
-        "자세히 설명",
-        "원인을 설명",
-        "단계별로",
-        "논리적으로",
-        "어떻게 생각해",
-        "뭐가 더 좋아",
-        "왜 그런지"
+        "차이",
+        "설명해줘",
+        "정리해줘",
+        "추천해줘",
+        "원인",
+        "해결 방법"
     };
 
-    private static readonly string[] FastPatterns =
+    private static readonly string[] FactKeywords =
+    {
+        "누구",
+        "누가",
+        "언제",
+        "어디",
+        "몇",
+        "몇 명",
+        "몇 년",
+        "무슨",
+        "이름",
+        "멤버",
+        "작곡",
+        "작사",
+        "출시",
+        "발매",
+        "국적",
+        "수도",
+        "데뷔",
+        "출생",
+        "사망",
+        "뜻",
+        "정의"
+    };
+
+    private static readonly string[] CasualKeywords =
     {
         "안녕",
         "ㅎㅇ",
         "하이",
         "ㅋㅋ",
-        "ㅋㅋㅋ",
         "ㅎㅎ",
-        "ㅇㅇ",
-        "아니",
-        "응",
-        "어",
-        "그래",
         "뭐해",
         "뭐함",
+        "심심해",
+        "놀자",
         "잘자",
-        "굿나잇"
+        "굿밤",
+        "배고파",
+        "졸려"
     };
 
     public GenerationProfile Classify(string message)
     {
-        var text = message.Trim();
+        if (string.IsNullOrWhiteSpace(message))
+            return Chat();
 
-        if (ThinkKeywords.Any(keyword =>
-            text.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
-        {
+        string text = message
+            .Trim()
+            .ToLowerInvariant();
+
+        // 명확한 잡담은 가장 먼저 처리
+        if (IsCasual(text))
+            return Chat();
+
+        // 분석/추론 요청
+        if (ContainsAny(text, ThinkKeywords))
             return Think();
-        }
 
-        if (text.Length >= 100)
-        {
+        // 사실 확인 질문
+        if (ContainsAny(text, FactKeywords))
+            return Fact();
+
+        // 긴 입력은 사고가 필요할 가능성이 높음
+        if (text.Length >= 60)
             return Think();
-        }
 
-        if (text.Count(c => c == '\n') >= 2)
-        {
-            return Think();
-        }
+        // 일반적인 짧은 질문
+        if (text.Contains('?'))
+            return Fact();
 
-        if (text.Length <= 20 &&
-            FastPatterns.Any(pattern =>
-                text.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
-        {
-            return Fast();
-        }
-
-        if (text.Length <= 30)
-        {
-            return Fast();
-        }
-
-        return Normal();
+        return Chat();
     }
 
-    private static GenerationProfile Fast() =>
-        new(
-            Mode: ChatMode.Fast,
-            Think: false,
-            NumPredict: 100,
-            Temperature: 0.7
-        );
+    private static bool IsCasual(string text)
+    {
+        if (text.Length > 15)
+            return false;
 
-    private static GenerationProfile Normal() =>
-        new(
-            Mode: ChatMode.Normal,
-            Think: false,
-            NumPredict: 180,
-            Temperature: 0.65
+        return ContainsAny(
+            text,
+            CasualKeywords
         );
+    }
 
-    private static GenerationProfile Think() =>
-        new(
-            Mode: ChatMode.Think,
+    private static bool ContainsAny(
+        string text,
+        string[] keywords)
+    {
+        return keywords.Any(
+            text.Contains
+        );
+    }
+
+    private static GenerationProfile Chat()
+    {
+        return new GenerationProfile(
+            ChatMode.Chat,
+            Think: false,
+            NumPredict: 80,
+            Temperature: 0.8,
+            MaxHistoryMessages: 8
+        );
+    }
+
+    private static GenerationProfile Fact()
+    {
+        return new GenerationProfile(
+            ChatMode.Fact,
+            Think: false,
+            NumPredict: 120,
+            Temperature: 0.2,
+            MaxHistoryMessages: 12
+        );
+    }
+
+    private static GenerationProfile Think()
+    {
+        return new GenerationProfile(
+            ChatMode.Think,
             Think: true,
-            NumPredict: 400,
-            Temperature: 0.6
+            NumPredict: 300,
+            Temperature: 0.55,
+            MaxHistoryMessages: 20
         );
+    }
 }
