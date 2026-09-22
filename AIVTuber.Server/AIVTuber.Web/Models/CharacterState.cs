@@ -8,5 +8,6 @@ public sealed record CharacterState(
     bool HasAudio,
     long MessageId,
     int SegmentIndex,
-    int SegmentCount
+    int SegmentCount,
+    string SegmentText
 );

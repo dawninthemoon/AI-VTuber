@@ -135,6 +135,7 @@ app.MapPost(
                         0.4f,
                         segmentIndex: 0,
                         segmentCount: 1,
+                        segmentText: waitingLine,
                         audio: waitingAudio);
                     await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
                 }
@@ -191,6 +192,7 @@ app.MapPost(
                     response.Intensity,
                     index,
                     segments.Count,
+                    segment,
                     audio);
 
                 logger.LogInformation(

@@ -17,7 +17,8 @@ public sealed class CharacterStateService
             HasAudio: false,
             MessageId: 0,
             SegmentIndex: 0,
-            SegmentCount: 0
+            SegmentCount: 0,
+            SegmentText: ""
         );
 
     public CharacterState Get()
@@ -45,7 +46,8 @@ public sealed class CharacterStateService
                 HasAudio: false,
                 MessageId: messageId,
                 SegmentIndex: 0,
-                SegmentCount: Math.Max(segmentCount, 0)
+                SegmentCount: Math.Max(segmentCount, 0),
+                SegmentText: ""
             );
 
             _state = next;
@@ -61,6 +63,7 @@ public sealed class CharacterStateService
         float intensity,
         int segmentIndex,
         int segmentCount,
+        string segmentText,
         byte[] audio)
     {
         if (audio.Length == 0)
@@ -84,7 +87,8 @@ public sealed class CharacterStateService
                 HasAudio: true,
                 MessageId: messageId,
                 SegmentIndex: segmentIndex,
-                SegmentCount: segmentCount
+                SegmentCount: segmentCount,
+                SegmentText: segmentText
             );
 
             _audioByVersion[next.Version] = audio;
@@ -115,7 +119,8 @@ public sealed class CharacterStateService
                 HasAudio: false,
                 MessageId: ++_lastMessageId,
                 SegmentIndex: 0,
-                SegmentCount: 0
+                SegmentCount: 0,
+                SegmentText: ""
             );
         }
     }

@@ -37,8 +37,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     private readonly List<Coroutine> voiceCoroutines =
         new List<Coroutine>();
-    private readonly Queue<AudioClip> voiceQueue =
-        new Queue<AudioClip>();
+    private readonly Queue<VoiceSegment> voiceQueue =
+        new Queue<VoiceSegment>();
     private AudioClip downloadedClip;
 
 
@@ -94,6 +94,11 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
         if (voiceQueue.Count == 0)
         {
+            if (subtitleText != null)
+            {
+                subtitleText.text = string.Empty;
+            }
+
             if (lipSyncController != null)
             {
                 lipSyncController.StopSpeaking();
@@ -102,7 +107,14 @@ public class AIVTuberStateReceiver : MonoBehaviour
             return;
         }
 
-        downloadedClip = voiceQueue.Dequeue();
+        VoiceSegment segment = voiceQueue.Dequeue();
+        downloadedClip = segment.clip;
+
+        if (subtitleText != null)
+        {
+            subtitleText.text = segment.text;
+        }
+
         audioSource.clip = downloadedClip;
         audioSource.Play();
         Debug.Log(
@@ -213,17 +225,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
 
         // ------------------------
-        // Subtitle
-        // ------------------------
-
-        if (subtitleText != null)
-        {
-            subtitleText.text =
-                state.text;
-        }
-
-
-        // ------------------------
         // Emotion
         // ------------------------
 
@@ -248,6 +249,11 @@ public class AIVTuberStateReceiver : MonoBehaviour
             StopVoiceDownloads();
             StopVoice();
             activeMessageId = state.messageId;
+
+            if (subtitleText != null)
+            {
+                subtitleText.text = string.Empty;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(state.text) || !state.hasAudio)
@@ -258,7 +264,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
         Coroutine coroutine = StartCoroutine(
             DownloadVoiceSegment(
                 state.version,
-                state.messageId
+                state.messageId,
+                state.segmentText
             )
         );
         voiceCoroutines.Add(coroutine);
@@ -267,7 +274,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     private IEnumerator DownloadVoiceSegment(
         long version,
-        long messageId)
+        long messageId,
+        string segmentText)
     {
         if (audioSource == null)
         {
@@ -307,7 +315,12 @@ public class AIVTuberStateReceiver : MonoBehaviour
             yield break;
         }
 
-        voiceQueue.Enqueue(clip);
+        voiceQueue.Enqueue(
+            new VoiceSegment(
+                clip,
+                segmentText
+            )
+        );
         Debug.Log(
             $"TTS 조각 큐 추가. version={version}, 대기={voiceQueue.Count}"
         );
@@ -329,10 +342,10 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
         while (voiceQueue.Count > 0)
         {
-            AudioClip queuedClip = voiceQueue.Dequeue();
-            if (queuedClip != null)
+            VoiceSegment queuedSegment = voiceQueue.Dequeue();
+            if (queuedSegment.clip != null)
             {
-                Destroy(queuedClip);
+                Destroy(queuedSegment.clip);
             }
         }
 
@@ -362,6 +375,21 @@ public class AIVTuberStateReceiver : MonoBehaviour
     }
 
 
+    private sealed class VoiceSegment
+    {
+        public readonly AudioClip clip;
+        public readonly string text;
+
+        public VoiceSegment(
+            AudioClip clip,
+            string text)
+        {
+            this.clip = clip;
+            this.text = text;
+        }
+    }
+
+
     [System.Serializable]
     private class CharacterState
     {
@@ -373,5 +401,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
         public long messageId;
         public int segmentIndex;
         public int segmentCount;
+        public string segmentText;
     }
 }
