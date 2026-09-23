@@ -100,6 +100,33 @@ def python_command(explicit, environment):
     return [conda, "run", "--no-capture-output", "-n", environment, "python", "-u"]
 
 
+def java_command_for_spire(mod_the_spire_jar):
+    if WINDOWS:
+        candidates = []
+
+        # Workshop layout:
+        # steamapps/workshop/content/646570/<item>/ModTheSpire.jar
+        parents = mod_the_spire_jar.parents
+        if len(parents) > 4 and parents[1].name == "646570":
+            candidates.append(
+                parents[4] / "common/SlayTheSpire/jre/bin/java.exe"
+            )
+
+        # Also support a ModTheSpire.jar copied into the game directory.
+        candidates.append(mod_the_spire_jar.parent / "jre/bin/java.exe")
+
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+
+        raise ValueError(
+            "Slay the Spire 내장 Java 8을 찾지 못했습니다. "
+            "Steam에서 게임 파일 무결성을 확인하세요."
+        )
+
+    return "java"
+
+
 def command_for(name, settings):
     openai_key = validate_api_key("OpenAI API Key", settings["openai_key"])
     youtube_key = validate_api_key("YouTube API Key", settings["youtube_key"])
@@ -130,7 +157,8 @@ def command_for(name, settings):
     jar = Path(settings["spire_jar"])
     if not jar.is_file() or jar.suffix.lower() != ".jar":
         raise ValueError("ModTheSpire.jar 파일을 선택하세요. CommunicationMod 설정도 필요합니다.")
-    return ["java", "-jar", str(jar)], jar.parent, env
+    java = java_command_for_spire(jar)
+    return [java, "-jar", str(jar)], jar.parent, env
 
 
 def stop_process(process):

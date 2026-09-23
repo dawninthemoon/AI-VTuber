@@ -16,6 +16,7 @@ public sealed class ChatResponseService
     private readonly ILogger<ChatResponseService> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly IdleActivityService _activity;
+    private readonly SpeechTurnCoordinator _speechTurns;
 
     public ChatResponseService(
         ChatService chatService,
@@ -24,7 +25,8 @@ public sealed class ChatResponseService
         CharacterStateService stateService,
         GPTSoVitsTtsService ttsService,
         ILogger<ChatResponseService> logger,
-        IdleActivityService activity)
+        IdleActivityService activity,
+        SpeechTurnCoordinator speechTurns)
     {
         _chatService = chatService;
         _classifier = classifier;
@@ -33,6 +35,7 @@ public sealed class ChatResponseService
         _ttsService = ttsService;
         _logger = logger;
         _activity = activity;
+        _speechTurns = speechTurns;
     }
 
     public async Task<ChatResponse> RespondAsync(
@@ -46,10 +49,13 @@ public sealed class ChatResponseService
 
         _activity.Begin();
         bool acquired = false;
+        bool speechTurnAcquired = false;
         try
         {
             await _lock.WaitAsync(cancellationToken);
             acquired = true;
+            await _speechTurns.WaitAsync(cancellationToken);
+            speechTurnAcquired = true;
             GenerationProfile profile = _classifier.Classify(message);
             SearchEvidence? evidence = null;
 
@@ -161,6 +167,7 @@ public sealed class ChatResponseService
         }
         finally
         {
+            if (speechTurnAcquired) _speechTurns.Release();
             if (acquired) _lock.Release();
             _activity.End();
         }

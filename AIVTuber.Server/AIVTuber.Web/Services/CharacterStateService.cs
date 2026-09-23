@@ -6,6 +6,7 @@ public sealed class CharacterStateService
 {
     private readonly object _lock = new();
     private readonly Dictionary<long, byte[]> _audioByVersion = [];
+    private readonly Dictionary<long, bool> _idleByMessage = [];
     private long _lastMessageId;
 
     private CharacterState _state =
@@ -18,7 +19,8 @@ public sealed class CharacterStateService
             MessageId: 0,
             SegmentIndex: 0,
             SegmentCount: 0,
-            SegmentText: ""
+            SegmentText: "",
+            IsIdle: false
         );
 
     public CharacterState Get()
@@ -33,7 +35,8 @@ public sealed class CharacterStateService
         string text,
         string emotion = "neutral",
         float intensity = 0.5f,
-        int segmentCount = 1)
+        int segmentCount = 1,
+        bool isIdle = false)
     {
         lock (_lock)
         {
@@ -47,9 +50,11 @@ public sealed class CharacterStateService
                 MessageId: messageId,
                 SegmentIndex: 0,
                 SegmentCount: Math.Max(segmentCount, 0),
-                SegmentText: ""
+                SegmentText: "",
+                IsIdle: isIdle
             );
 
+            _idleByMessage[messageId] = isIdle;
             _state = next;
             TrimAudioHistory(next.Version);
             return messageId;
@@ -90,7 +95,8 @@ public sealed class CharacterStateService
                 MessageId: messageId,
                 SegmentIndex: segmentIndex,
                 SegmentCount: segmentCount,
-                SegmentText: segmentText
+                SegmentText: segmentText,
+                IsIdle: _idleByMessage.GetValueOrDefault(messageId)
             );
 
             publishedVersion = next.Version;
@@ -114,6 +120,7 @@ public sealed class CharacterStateService
         lock (_lock)
         {
             _audioByVersion.Clear();
+            _idleByMessage.Clear();
             _state = new CharacterState(
                 Text: "",
                 Emotion: "neutral",
@@ -123,7 +130,8 @@ public sealed class CharacterStateService
                 MessageId: ++_lastMessageId,
                 SegmentIndex: 0,
                 SegmentCount: 0,
-                SegmentText: ""
+                SegmentText: "",
+                IsIdle: false
             );
         }
     }
@@ -135,6 +143,12 @@ public sealed class CharacterStateService
         foreach (long version in _audioByVersion.Keys.Where(v => v < oldestVersion).ToArray())
         {
             _audioByVersion.Remove(version);
+        }
+
+        long oldestMessageId = _lastMessageId - 16;
+        foreach (long messageId in _idleByMessage.Keys.Where(id => id < oldestMessageId).ToArray())
+        {
+            _idleByMessage.Remove(messageId);
         }
     }
 }

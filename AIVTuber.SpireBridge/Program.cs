@@ -49,6 +49,18 @@ while (await Console.In.ReadLineAsync() is { } stateLine)
             Console.Error.WriteLine("Server returned no valid CommunicationMod command; waiting.");
         }
     }
+    catch (JsonException exception)
+    {
+        // CommunicationMod occasionally emits malformed state JSON. Log only a
+        // bounded window around the failing byte so the exact field can be fixed
+        // without flooding the error log with the full game state.
+        int bytePosition = exception.BytePositionInLine is long position
+            ? (int)Math.Clamp(position, 0, int.MaxValue)
+            : 0;
+        string diagnostic = BuildJsonDiagnostic(stateLine, bytePosition);
+        Console.Error.WriteLine(
+            $"State JSON invalid at byte {exception.BytePositionInLine}: {exception.Message} Context: {diagnostic}");
+    }
     catch (Exception exception)
     {
         // A temporarily unavailable server must not cause protocol garbage on stdout.
@@ -57,6 +69,15 @@ while (await Console.In.ReadLineAsync() is { } stateLine)
 
     Console.Out.WriteLine(command);
     Console.Out.Flush();
+}
+
+static string BuildJsonDiagnostic(string stateLine, int bytePosition)
+{
+    byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(stateLine);
+    int start = Math.Max(0, bytePosition - 80);
+    int length = Math.Min(160, utf8.Length - start);
+    string context = System.Text.Encoding.UTF8.GetString(utf8, start, length);
+    return JsonSerializer.Serialize(context.Replace("\0", "\\0"));
 }
 
 static bool IsValidCommunicationModCommand(string? command)

@@ -9,5 +9,6 @@ public sealed record CharacterState(
     long MessageId,
     int SegmentIndex,
     int SegmentCount,
-    string SegmentText
+    string SegmentText,
+    bool IsIdle
 );

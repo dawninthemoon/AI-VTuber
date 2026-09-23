@@ -9,17 +9,20 @@ public sealed class SpireSpeechService
     private readonly GPTSoVitsTtsService _ttsService;
     private readonly ILogger<SpireSpeechService> _logger;
     private readonly IdleActivityService _activity;
+    private readonly SpeechTurnCoordinator _speechTurns;
 
     public SpireSpeechService(
         CharacterStateService characterStateService,
         GPTSoVitsTtsService ttsService,
         ILogger<SpireSpeechService> logger,
-        IdleActivityService activity)
+        IdleActivityService activity,
+        SpeechTurnCoordinator speechTurns)
     {
         _characterStateService = characterStateService;
         _ttsService = ttsService;
         _logger = logger;
         _activity = activity;
+        _speechTurns = speechTurns;
     }
 
     public void Publish(SpireModelDecision decision)
@@ -34,15 +37,17 @@ public sealed class SpireSpeechService
         speech = speech[..Math.Min(speech.Length, 180)];
         string emotion = NormalizeEmotion(decision.Emotion);
         float intensity = Math.Clamp(decision.Intensity, 0f, 1f);
-        long messageId = _characterStateService.BeginResponse(speech, emotion, intensity);
-
-        _ = GenerateAndPublishAsync(messageId, speech, emotion, intensity);
+        _ = GenerateAndPublishAsync(speech, emotion, intensity);
     }
 
-    private async Task GenerateAndPublishAsync(long messageId, string speech, string emotion, float intensity)
+    private async Task GenerateAndPublishAsync(string speech, string emotion, float intensity)
     {
+        bool acquired = false;
         try
         {
+            await _speechTurns.WaitAsync();
+            acquired = true;
+            long messageId = _characterStateService.BeginResponse(speech, emotion, intensity);
             byte[] audio = await _ttsService.GenerateAsync(speech);
             _characterStateService.PublishAudioSegment(
                 messageId,
@@ -61,6 +66,7 @@ public sealed class SpireSpeechService
         }
         finally
         {
+            if (acquired) _speechTurns.Release();
             _activity.End();
         }
     }

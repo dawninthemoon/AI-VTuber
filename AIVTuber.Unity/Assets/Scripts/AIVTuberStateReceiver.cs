@@ -35,6 +35,9 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     private long lastVersion = -1;
     private long activeMessageId = -1;
+    private bool activeMessageIsIdle;
+    private readonly HashSet<long> interruptedMessageIds =
+        new HashSet<long>();
 
     private readonly List<Coroutine> voiceCoroutines =
         new List<Coroutine>();
@@ -262,11 +265,31 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
         if (isNewMessage)
         {
-            StopVoiceDownloads();
-            StopVoice();
-            activeMessageId = state.messageId;
+            interruptedMessageIds.RemoveWhere(
+                id => id < state.messageId - 16
+            );
 
-            if (subtitleText != null)
+            bool isReset =
+                string.IsNullOrWhiteSpace(state.text) &&
+                state.segmentCount == 0;
+
+            // Normal chat/game speech finishes in queue order. Only idle speech
+            // is interruptible by a real response; an explicit reset also stops all audio.
+            if ((activeMessageIsIdle && !state.isIdle) || isReset)
+            {
+                if (activeMessageId >= 0)
+                {
+                    interruptedMessageIds.Add(activeMessageId);
+                }
+
+                StopVoiceDownloads();
+                StopVoice();
+            }
+
+            activeMessageId = state.messageId;
+            activeMessageIsIdle = state.isIdle;
+
+            if (isReset && subtitleText != null)
             {
                 subtitleText.text = string.Empty;
             }
@@ -317,7 +340,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
         pendingDownloads--;
 
-        if (messageId != activeMessageId)
+        if (interruptedMessageIds.Contains(messageId))
         {
             yield break;
         }
@@ -471,5 +494,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
         public int segmentIndex;
         public int segmentCount;
         public string segmentText;
+        public bool isIdle;
     }
 }

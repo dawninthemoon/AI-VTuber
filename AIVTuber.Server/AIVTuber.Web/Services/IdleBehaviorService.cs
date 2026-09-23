@@ -13,6 +13,14 @@ public sealed class IdleBehaviorService(
     IOptions<IdleOptions> options,
     ILogger<IdleBehaviorService> logger) : BackgroundService
 {
+    private static readonly string[] InterestTopics =
+    [
+        "게임 이야기. 실제로 플레이 중이라고 꾸미지 말고, 좋아하는 게임 요소나 해보고 싶은 게임에 관해 자연스럽게 혼잣말해.",
+        "만화나 애니메이션 이야기. 보지 않은 작품의 구체적인 내용을 지어내지 말고, 좋아하는 장르나 보고 싶은 작품 분위기를 이야기해.",
+        "음악 이야기. 락이나 J-POP 취향을 중심으로 듣고 싶은 음악, 밴드 사운드, 노래 분위기에 관해 이야기해.",
+        "디저트 이야기. 먹고 싶은 디저트, 좋아하는 맛이나 조합에 관해 가볍게 이야기해."
+    ];
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!options.Value.Enabled)
@@ -23,6 +31,7 @@ public sealed class IdleBehaviorService(
         long version = state.Get().Version;
         DateTimeOffset changedAt = DateTimeOffset.UtcNow;
         var recentLines = new Queue<string>();
+        int previousTopic = -1;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
@@ -46,12 +55,14 @@ public sealed class IdleBehaviorService(
                 using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, idle.Token);
                 cancellation.CancelAfter(TimeSpan.FromSeconds(30));
                 var snapshot = spire.GetLastState();
-                string topic = Random.Shared.Next(3) switch
+                int topicIndex;
+                do
                 {
-                    0 => "캐릭터의 취향에 맞는 가벼운 혼잣말",
-                    1 => "부담을 주지 않는 다정한 일상 잡담",
-                    _ => "캐릭터다운 짧은 상상이나 소소한 계획"
-                };
+                    topicIndex = Random.Shared.Next(InterestTopics.Length);
+                }
+                while (topicIndex == previousTopic);
+                previousTopic = topicIndex;
+                string topic = InterestTopics[topicIndex];
                 // Only use observations that were actually received recently.
                 string game = snapshot != null && DateTimeOffset.UtcNow - snapshot.ReceivedAt < TimeSpan.FromSeconds(30)
                     ? System.Text.Json.JsonSerializer.Serialize(snapshot) : "없음";
@@ -68,7 +79,11 @@ public sealed class IdleBehaviorService(
                 }
                 if (activity.Publish(() =>
                 {
-                    long id = state.BeginResponse(response.Text, response.Emotion, response.Intensity);
+                    long id = state.BeginResponse(
+                        response.Text,
+                        response.Emotion,
+                        response.Intensity,
+                        isIdle: true);
                     state.PublishAudioSegment(id, response.Text, response.Emotion, response.Intensity,
                         0, 1, response.Text, audio, out _);
                 }))

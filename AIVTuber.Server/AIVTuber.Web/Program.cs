@@ -44,6 +44,7 @@ builder.Services.AddSingleton<ChatService>();
 // Unity에 전달할 현재 캐릭터 상태
 builder.Services.AddSingleton<CharacterStateService>();
 builder.Services.AddSingleton<PlaybackStatusService>();
+builder.Services.AddSingleton<SpeechTurnCoordinator>();
 builder.Services.AddSingleton<SpireContextBuilder>();
 builder.Services.AddSingleton<OpenAiSpireDecisionService>();
 builder.Services.AddSingleton<SpireSpeechService>();
