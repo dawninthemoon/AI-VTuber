@@ -6,6 +6,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../AIVTuber.Server/AIVTuber.Web/Services/YouTubeReconnectPolicy.cs" Link="YouTubeReconnectPolicy.cs" />
+    <ProjectReference Include="../../AIVTuber.Server/AIVTuber.Web/AIVTuber.Web.csproj" />
   </ItemGroup>
 </Project>

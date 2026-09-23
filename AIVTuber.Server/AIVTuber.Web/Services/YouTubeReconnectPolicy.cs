@@ -1,34 +1,27 @@
 namespace AIVTuber.Web.Services;
 
-// Counts RPC attempts, not quota units (YouTube controls quota accounting).
 internal sealed class YouTubeReconnectPolicy
 {
-    private readonly Queue<TimeSpan> _attempts = new();
-    private int _shortConnections;
+    private int _failures;
 
-    public bool TryStart(TimeSpan now)
+    public TimeSpan AfterClose(TimeSpan duration, bool successful, bool progressed, bool rateLimited = false)
     {
-        while (_attempts.TryPeek(out var oldest) && now - oldest >= TimeSpan.FromHours(1))
+        if (successful && progressed)
         {
-            _attempts.Dequeue();
+            _failures = 0;
+            // Resume promptly, without spinning on subsecond streams with changing cursors.
+            return TimeSpan.FromSeconds(Math.Max(1, 3 - duration.TotalSeconds));
         }
-        if (_attempts.Count >= 12)
-        {
-            return false;
-        }
-        _attempts.Enqueue(now);
-        return true;
+        _failures = Math.Min(_failures + 1, 7);
+        double seconds = Math.Min(5 * Math.Pow(2, _failures - 1), 300);
+        return TimeSpan.FromSeconds(rateLimited ? Math.Max(30, seconds) : seconds);
     }
 
-    public TimeSpan AfterClose(TimeSpan duration, bool successful)
+    public static TimeSpan UntilQuotaReset(DateTimeOffset now)
     {
-        if (duration >= TimeSpan.FromMinutes(2))
-        {
-            _shortConnections = 0;
-            return TimeSpan.FromSeconds(successful ? 1 : 5);
-        }
-        // Receiving one batch does not make a rapidly closing stream healthy.
-        _shortConnections = Math.Min(_shortConnections + 1, 7);
-        return TimeSpan.FromSeconds(Math.Min(5 * Math.Pow(2, _shortConnections - 1), 300));
+        var pacific = TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles");
+        var nextMidnight = TimeZoneInfo.ConvertTime(now, pacific).Date.AddDays(1);
+        var resetUtc = TimeZoneInfo.ConvertTimeToUtc(nextMidnight, pacific);
+        return new DateTimeOffset(resetUtc) - now + TimeSpan.FromMinutes(1);
     }
 }

@@ -50,6 +50,7 @@ builder.Services.AddSingleton<OpenAiSpireDecisionService>();
 builder.Services.AddSingleton<SpireSpeechService>();
 builder.Services.AddSingleton<SpireTurnService>();
 builder.Services.AddSingleton<ChatResponseService>();
+builder.Services.AddSingleton<YouTubeChatStatus>();
 builder.Services.AddHostedService(
     services => services.GetRequiredService<YouTubeLiveChatService>());
 
@@ -61,6 +62,7 @@ var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapGet("/youtube/status", (YouTubeChatStatus status) => Results.Ok(status.Snapshot()));
 
 // -----------------------------
 // Chat

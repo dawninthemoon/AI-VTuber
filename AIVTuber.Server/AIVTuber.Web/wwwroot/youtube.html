@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube 채팅 수신 상태</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#181818;color:#eee;margin:24px;max-width:1100px}a{color:#8dbaff}td,th{text-align:left;padding:10px;border-bottom:1px solid #444;vertical-align:top}table{border-collapse:collapse;width:100%;table-layout:fixed}td{overflow-wrap:anywhere}th:nth-child(1){width:110px}th:nth-child(2){width:160px}th:nth-child(4){width:160px}#summary{padding:16px;background:#272727;white-space:pre-line}small{color:#bbb}
+</style>
+<a href="/">웹 채팅으로</a>
+<h1>YouTube 채팅 수신 상태</h1>
+<p id="summary" role="status">연결 상태 확인 중…</p>
+<p><small>최근 수신 500개를 표시합니다. 서버 재시작 시 기록이 초기화됩니다. ‘응답 준비됨’은 생성 완료이며 실제 음성 재생 완료를 뜻하지 않습니다. 이 화면의 갱신은 로컬 서버만 조회합니다.</small></p>
+<table><thead><tr><th>수신 시각</th><th>작성자</th><th>채팅</th><th>처리 상태</th></tr></thead><tbody id="messages"></tbody></table>
+<script>
+const labels={disabled:'수집 꺼짐',discovering:'방송 확인 중',waiting_for_live:'방송 시작 대기',connecting:'연결 중',connected:'수신 연결됨',reconnecting:'재연결 대기',quota_wait:'일일 할당량 초기화 대기',ended:'방송 종료',stopped:'수집 중단',received:'수신됨',queued:'응답 대기',processing:'응답 처리 중',response_ready:'응답 준비됨',filtered:'필터 제외',not_selected:'답변 미선택',failed:'응답 실패',cancelled:'취소됨',queue_full:'응답 대기열 가득 참',before_session:'서버 시작 전 채팅',not_text_message:'일반 텍스트가 아님',invalid_timestamp:'게시 시각 확인 실패',message_too_long:'글자 수 제한 초과',ignored_channel:'제외 채널',missing_trigger:'호출어 없음',empty_message:'빈 메시지',empty_after_trigger:'호출어 뒤 본문 없음',no_audio:'음성 게시 없음',server_shutdown:'서버 종료',resume_with_cursor:'마지막 수신 지점부터 재개',stream_closed_without_progress:'수신 지점 진행 없이 종료',no_active_chat:'활성 채팅 없음',quotaExceeded:'일일 할당량 소진',ResourceExhausted:'호출 빈도 또는 할당량 제한'};
+const label=v=>labels[v]||v;
+async function refresh(){
+ try{
+  const response=await fetch('/youtube/status',{cache:'no-store'});
+  if(!response.ok)throw new Error('HTTP '+response.status);
+  const data=await response.json();
+  document.getElementById('summary').textContent=`${label(data.connection)}${data.reason?' · '+label(data.reason):''}\n수신 ${data.received}개 · 스트림 연결 시도 ${data.streamAttempts}회 · 방송 조회 ${data.videoLookups}회 (할당량 수치 아님)${data.retryAt?'\n재시도 예정: '+new Date(data.retryAt).toLocaleString():''}`;
+  const rows=data.recent.map(item=>{
+   const row=document.createElement('tr');
+   for(const value of [new Date(item.receivedAt).toLocaleTimeString(),item.author,item.text,label(item.status)+(item.reason?' · '+label(item.reason):'')]){
+    const cell=document.createElement('td');cell.textContent=value;row.append(cell);
+   }
+   return row;
+  });
+  document.getElementById('messages').replaceChildren(...rows);
+ }catch(error){document.getElementById('summary').textContent='로컬 서버에 연결할 수 없습니다: '+error.message;}
+ finally{setTimeout(refresh,2000);}
+}
+refresh();
+</script>
+</html>

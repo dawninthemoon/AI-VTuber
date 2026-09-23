@@ -8,5 +8,5 @@ public sealed class YouTubeOptions
     public string IgnoreChannelId { get; set; } = "";
     public string TriggerPrefix { get; set; } = "";
     public int MaxMessageLength { get; set; } = 200;
-    public int QueueCapacity { get; set; } = 20;
+    public int QueueCapacity { get; set; } = 100;
 }
