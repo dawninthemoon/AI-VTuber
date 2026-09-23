@@ -64,8 +64,10 @@ public sealed class CharacterStateService
         int segmentIndex,
         int segmentCount,
         string segmentText,
-        byte[] audio)
+        byte[] audio,
+        out long publishedVersion)
     {
+        publishedVersion = 0;
         if (audio.Length == 0)
         {
             return false;
@@ -91,6 +93,7 @@ public sealed class CharacterStateService
                 SegmentText: segmentText
             );
 
+            publishedVersion = next.Version;
             _audioByVersion[next.Version] = audio;
             _state = next;
             TrimAudioHistory(next.Version);

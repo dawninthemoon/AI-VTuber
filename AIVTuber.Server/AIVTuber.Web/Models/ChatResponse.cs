@@ -1,3 +1,3 @@
 namespace AIVTuber.Web.Models;
 
-public sealed record ChatResponse(string Response, IReadOnlyList<SearchHit>? Sources = null);
+public sealed record ChatResponse(string Response, IReadOnlyList<SearchHit>? Sources = null, long AudioVersion = 0);

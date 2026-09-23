@@ -137,7 +137,8 @@ app.MapPost(
                         segmentIndex: 0,
                         segmentCount: 1,
                         segmentText: waitingLine,
-                        audio: waitingAudio);
+                        audio: waitingAudio,
+                        publishedVersion: out _);
                     await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
                 }
             }
@@ -176,6 +177,7 @@ app.MapPost(
         // 2. GPT-SoVITS 음성을 어구별로 순차 생성한다.
         //    각 조각은 완성되는 즉시 Unity에 공개된다.
         // ---------------------------------
+        long audioVersion = 0;
         for (int index = 0; index < segments.Count; index++)
         {
             string segment = segments[index];
@@ -194,7 +196,13 @@ app.MapPost(
                     index,
                     segments.Count,
                     segment,
-                    audio);
+                    audio,
+                    out long publishedVersion);
+
+                if (published)
+                {
+                    audioVersion = publishedVersion;
+                }
 
                 logger.LogInformation(
                     "TTS 조각 생성 성공: {Current}/{Total}, {Bytes} bytes, Published: {Published}, Text: {Text}",
@@ -233,7 +241,8 @@ app.MapPost(
         return Results.Ok(
             new ChatResponse(
                 response.Text,
-                evidence?.Hits
+                evidence?.Hits,
+                audioVersion
             )
         );
     }
@@ -320,7 +329,7 @@ app.MapPost(
         PlaybackStatusService playbackStatusService
     ) =>
     {
-        playbackStatusService.Set(request.Speaking);
+        playbackStatusService.Set(request.Speaking, request.CompletedVersion);
         return Results.Ok(playbackStatusService.Get());
     }
 );

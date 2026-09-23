@@ -42,6 +42,11 @@ public class AIVTuberStateReceiver : MonoBehaviour
         new Queue<VoiceSegment>();
     private AudioClip downloadedClip;
     private bool reportedSpeaking;
+    private long playingVersion;
+    private long completedVersion;
+    private long reportedCompletedVersion = -1;
+    private int pendingDownloads;
+    private bool sendingPlaybackStatus;
 
 
     private string StateUrl =>
@@ -88,11 +93,13 @@ public class AIVTuberStateReceiver : MonoBehaviour
     {
         if (audioSource == null || audioSource.isPlaying)
         {
+            ReportPlaybackStatus(audioSource != null && audioSource.isPlaying || pendingDownloads > 0);
             return;
         }
 
         if (downloadedClip != null)
         {
+            completedVersion = System.Math.Max(completedVersion, playingVersion);
             Destroy(downloadedClip);
             downloadedClip = null;
         }
@@ -109,13 +116,14 @@ public class AIVTuberStateReceiver : MonoBehaviour
                 lipSyncController.StopSpeaking();
             }
 
-            ReportPlaybackStatus(false);
+            ReportPlaybackStatus(pendingDownloads > 0);
 
             return;
         }
 
         VoiceSegment segment = voiceQueue.Dequeue();
         downloadedClip = segment.clip;
+        playingVersion = segment.version;
 
         if (subtitleText != null)
         {
@@ -269,6 +277,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
             return;
         }
 
+        pendingDownloads++;
+        ReportPlaybackStatus(true);
         Coroutine coroutine = StartCoroutine(
             DownloadVoiceSegment(
                 state.version,
@@ -287,6 +297,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
     {
         if (audioSource == null)
         {
+            pendingDownloads--;
             Debug.LogWarning(
                 "AudioSource가 연결되어 있지 않습니다."
             );
@@ -303,6 +314,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
             UnityWebRequestMultimedia.GetAudioClip(url, AudioType.WAV);
         request.SetRequestHeader("Cache-Control", "no-cache");
         yield return request.SendWebRequest();
+
+        pendingDownloads--;
 
         if (messageId != activeMessageId)
         {
@@ -326,7 +339,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
         voiceQueue.Enqueue(
             new VoiceSegment(
                 clip,
-                segmentText
+                segmentText,
+                version
             )
         );
         Debug.Log(
@@ -367,35 +381,44 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     private void ReportPlaybackStatus(bool speaking)
     {
-        if (reportedSpeaking == speaking || !isActiveAndEnabled)
+        if (!isActiveAndEnabled || sendingPlaybackStatus ||
+            (reportedSpeaking == speaking && reportedCompletedVersion == completedVersion))
         {
             return;
         }
 
-        reportedSpeaking = speaking;
-        StartCoroutine(SendPlaybackStatus(speaking));
+        sendingPlaybackStatus = true;
+        StartCoroutine(SendPlaybackStatus(speaking, completedVersion));
     }
 
-    private IEnumerator SendPlaybackStatus(bool speaking)
+    private IEnumerator SendPlaybackStatus(bool speaking, long finishedVersion)
     {
-        string json = $"{{\"speaking\":{speaking.ToString().ToLowerInvariant()}}}";
+        string json = $"{{\"speaking\":{speaking.ToString().ToLowerInvariant()},\"completedVersion\":{finishedVersion}}}";
 
         using UnityWebRequest request = new UnityWebRequest(
             PlaybackStatusUrl,
             UnityWebRequest.kHttpVerbPOST);
+        request.timeout = 3;
         request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
         request.downloadHandler = new DownloadHandlerBuffer();
         request.SetRequestHeader("Content-Type", "application/json");
 
         yield return request.SendWebRequest();
+        sendingPlaybackStatus = false;
 
-        if (request.result != UnityWebRequest.Result.Success)
+        if (request.result == UnityWebRequest.Result.Success)
+        {
+            reportedSpeaking = speaking;
+            reportedCompletedVersion = finishedVersion;
+        }
+        else
         {
             Debug.LogWarning(
                 $"Playback status update failed: {request.responseCode} {request.error}"
             );
         }
     }
+
 
     private void StopVoiceDownloads()
     {
@@ -408,6 +431,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
         }
 
         voiceCoroutines.Clear();
+        pendingDownloads = 0;
     }
 
     private void OnDestroy()
@@ -421,13 +445,16 @@ public class AIVTuberStateReceiver : MonoBehaviour
     {
         public readonly AudioClip clip;
         public readonly string text;
+        public readonly long version;
 
         public VoiceSegment(
             AudioClip clip,
-            string text)
+            string text,
+            long version)
         {
             this.clip = clip;
             this.text = text;
+            this.version = version;
         }
     }
 

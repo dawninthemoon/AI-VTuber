@@ -15,11 +15,12 @@ public sealed class PlaybackStatusService
         }
     }
 
-    public void Set(bool speaking)
+    public void Set(bool speaking, long completedVersion = 0)
     {
         lock (_lock)
         {
-            _status = new PlaybackStatus(speaking, DateTimeOffset.UtcNow);
+            _status = new PlaybackStatus(speaking, DateTimeOffset.UtcNow,
+                Math.Max(_status.CompletedVersion, completedVersion));
         }
     }
 }
