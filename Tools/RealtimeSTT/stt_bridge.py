@@ -8,7 +8,7 @@ import requests
 from RealtimeSTT import AudioToTextRecorder
 
 
-SERVER_URL = os.getenv("AIVTUBER_SERVER_URL", "http://127.0.0.1:5000").rstrip("/")
+SERVER_URL = os.getenv("AIVTUBER_SERVER_URL", "http://127.0.0.1:5050").rstrip("/")
 CHAT_URL = f"{SERVER_URL}/chat"
 HEALTH_URL = f"{SERVER_URL}/health"
 PLAYBACK_URL = f"{SERVER_URL}/voice/playback"

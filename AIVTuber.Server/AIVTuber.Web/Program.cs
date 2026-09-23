@@ -1,5 +1,6 @@
 using AIVTuber.Web.Models;
 using AIVTuber.Web.Services;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,12 +11,19 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection("Ollama")
 );
+builder.Services.Configure<SpireOptions>(
+    builder.Configuration.GetSection("Spire")
+);
+builder.Services.Configure<OpenAiOptions>(
+    builder.Configuration.GetSection("OpenAI")
+);
 
 // -----------------------------
 // HTTP Services
 // -----------------------------
 
 builder.Services.AddHttpClient<OllamaService>();
+builder.Services.AddHttpClient<OpenAiSpireDecisionService>();
 
 builder.Services.AddHttpClient<GPTSoVitsTtsService>();
 builder.Services.AddHttpClient<WikipediaSearchService>();
@@ -32,6 +40,10 @@ builder.Services.AddSingleton<ChatService>();
 // Unity에 전달할 현재 캐릭터 상태
 builder.Services.AddSingleton<CharacterStateService>();
 builder.Services.AddSingleton<PlaybackStatusService>();
+builder.Services.AddSingleton<SpireContextBuilder>();
+builder.Services.AddSingleton<OpenAiSpireDecisionService>();
+builder.Services.AddSingleton<SpireSpeechService>();
+builder.Services.AddSingleton<SpireTurnService>();
 
 var app = builder.Build();
 
@@ -332,6 +344,50 @@ app.MapPost(
         playbackStatusService.Set(request.Speaking, request.CompletedVersion);
         return Results.Ok(playbackStatusService.Get());
     }
+);
+
+// -----------------------------
+// Slay the Spire / CommunicationMod
+// -----------------------------
+
+// This endpoint is intentionally synchronous: CommunicationMod sends one stable
+// state then waits for exactly one command on its child process's stdout.
+app.MapPost(
+    "/spire/turn",
+    async (
+        JsonElement state,
+        SpireTurnService spireTurnService,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken) =>
+    {
+        SpireTurnResponse response = await spireTurnService.DecideAsync(state, cancellationToken);
+
+        logger.LogInformation(
+            "Spire turn received. Command={Command}, AutoPlay={AutoPlay}",
+            response.Command,
+            response.AutoPlay);
+
+        return Results.Ok(response);
+    }
+);
+
+app.MapGet(
+    "/spire/state",
+    (SpireTurnService spireTurnService) =>
+        Results.Ok(spireTurnService.GetLastState())
+);
+
+app.MapGet(
+    "/spire/context",
+    (SpireTurnService spireTurnService) =>
+        Results.Ok(spireTurnService.GetLastContext())
+);
+
+// Local-only diagnostic endpoint for adding support for new CommunicationMod screens.
+app.MapGet(
+    "/spire/raw-state",
+    (SpireTurnService spireTurnService) =>
+        Results.Ok(spireTurnService.GetLastRawState())
 );
 
 app.MapGet(
