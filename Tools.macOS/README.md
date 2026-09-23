@@ -23,12 +23,12 @@ Finder에서 필요한 `.command` 파일을 더블클릭하면 각각 터미널�
 
 | 파일 | 역할 |
 | --- | --- |
-| `WebServer.command` | 웹 서버 실행: `http://127.0.0.1:5000` |
+| `WebServer.command` | 웹 서버 실행: `http://127.0.0.1:5050` |
 | `RealtimeSTT.command` | 마이크 음성을 인식해서 웹 서버에 전달 |
 | `GPT-SoVITS.command` | GPT-SoVITS API 실행: `http://127.0.0.1:9881` |
 
 웹 서버를 먼저 실행하고 STT를 실행하세요. STT는 서버가 준비될 때까지 기다립니다.
-GPT-SoVITS를 사용하는 경우 해당 API도 실행하세요. 대화에 사용하는 Ollama와 모델은 별도로 준비하고 실행해야 합니다(서버 설정은 `AIVTuber.Server/AIVTuber.Web/appsettings.json` 참고).
+GPT-SoVITS를 사용하는 경우 해당 API도 실행하세요. 대화에는 OpenAI GPT-6 Luna를 사용하므로 `config.local.sh`에 `OPENAI_API_KEY`를 설정해야 합니다(서버 설정은 `AIVTuber.Server/AIVTuber.Web/appsettings.json` 참고).
 
 터미널에서 직접 실행할 수도 있습니다.
 

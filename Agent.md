@@ -22,7 +22,7 @@
 1. 웹 테스트 UI가 `POST /chat`에 메시지를 보낸다.
 2. `ChatService`가 대화 기록과 `ChatClassifier`의 생성 프로필을 사용해 `OllamaService`에서 응답을 얻는다.
 3. `CharacterStateService`가 `Text`, `Emotion`, `Intensity`, `Version`을 보관한다. `POST /chat/reset`은 기록과 상태를 초기화한다.
-4. Unity의 `AIVTuberStateReceiver`가 기본값 `http://localhost:5000/unity/state`를 0.25초 간격으로 조회하고 버전이 바뀌면 자막, 감정, 임시 립싱크를 갱신한다.
+4. Unity의 `AIVTuberStateReceiver`가 기본값 `http://localhost:5050/unity/state`를 0.25초 간격으로 조회하고 버전이 바뀌면 자막, 감정, 임시 립싱크를 갱신한다.
 5. `Live2DEmotionController`는 Cubism 파라미터를 직접 변경한다. `Live2DExpressionController`도 존재하지만 현재 수신 코드에서는 호출되지 않는다.
 6. `/unity/audio` 엔드포인트와 Unity의 `PlayVoice` 코드는 있으나 현재 대화 흐름에서 음성 생성과 재생이 연결되어 있지 않다. `Live2DLipSyncController`는 글자 수로 발화 시간을 추정하는 임시 구현이다.
 

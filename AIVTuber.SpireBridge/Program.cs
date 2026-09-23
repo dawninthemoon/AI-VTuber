@@ -1,6 +1,9 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AIVTuber.SpireBridge.Metadata;
+
+SpireMetadataProvider.Initialize(message => Console.Error.WriteLine(message));
 
 const string defaultServerUrl = "http://127.0.0.1:5050";
 string serverUrl = args.Length > 0 ? args[0] : defaultServerUrl;

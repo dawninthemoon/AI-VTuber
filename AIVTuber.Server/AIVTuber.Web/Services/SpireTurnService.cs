@@ -81,8 +81,7 @@ public sealed class SpireTurnService
             return new SpireTurnResponse(endTurn.Command, true, "No playable card remains.");
         }
 
-        SpireLegalAction? firstChoice = context.LegalActions.FirstOrDefault(action =>
-            action.Command.StartsWith("CHOOSE ", StringComparison.Ordinal));
+        SpireLegalAction? firstChoice = SelectFallbackChoice(context);
         if (firstChoice != null)
         {
             await DelayForScreenActionAsync(firstChoice.Command, cancellationToken);
@@ -133,5 +132,18 @@ public sealed class SpireTurnService
         {
             await Task.Delay(delay, cancellationToken);
         }
+    }
+
+    private static SpireLegalAction? SelectFallbackChoice(SpireTurnContext context)
+    {
+        IEnumerable<SpireLegalAction> choices = context.LegalActions.Where(action =>
+            action.Command.StartsWith("CHOOSE ", StringComparison.Ordinal));
+
+        // Never waste a required hand-selection action on an unremovable Ascender's Bane.
+        SpireLegalAction? removable = choices.FirstOrDefault(action =>
+            !action.Description.Contains("cannot be removed", StringComparison.OrdinalIgnoreCase) &&
+            !action.Description.Contains("제거할 수 없", StringComparison.Ordinal));
+
+        return removable ?? choices.FirstOrDefault();
     }
 }

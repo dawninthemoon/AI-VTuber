@@ -3,30 +3,34 @@ using AIVTuber.Web.Services;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.Configure<IdleOptions>(builder.Configuration.GetSection("Idle"));
+builder.Services.AddSingleton<IdleActivityService>();
+builder.Services.AddHostedService<IdleBehaviorService>();
 
 // -----------------------------
 // Options
 // -----------------------------
 
-builder.Services.Configure<OllamaOptions>(
-    builder.Configuration.GetSection("Ollama")
-);
 builder.Services.Configure<SpireOptions>(
     builder.Configuration.GetSection("Spire")
 );
 builder.Services.Configure<OpenAiOptions>(
     builder.Configuration.GetSection("OpenAI")
 );
+builder.Services.Configure<YouTubeOptions>(
+    builder.Configuration.GetSection("YouTube")
+);
 
 // -----------------------------
 // HTTP Services
 // -----------------------------
 
-builder.Services.AddHttpClient<OllamaService>();
+builder.Services.AddHttpClient<OpenAiChatService>();
 builder.Services.AddHttpClient<OpenAiSpireDecisionService>();
 
 builder.Services.AddHttpClient<GPTSoVitsTtsService>();
 builder.Services.AddHttpClient<WikipediaSearchService>();
+builder.Services.AddHttpClient<YouTubeLiveChatService>();
 
 // -----------------------------
 // Application Services
@@ -44,6 +48,9 @@ builder.Services.AddSingleton<SpireContextBuilder>();
 builder.Services.AddSingleton<OpenAiSpireDecisionService>();
 builder.Services.AddSingleton<SpireSpeechService>();
 builder.Services.AddSingleton<SpireTurnService>();
+builder.Services.AddSingleton<ChatResponseService>();
+builder.Services.AddHostedService(
+    services => services.GetRequiredService<YouTubeLiveChatService>());
 
 var app = builder.Build();
 
@@ -62,11 +69,7 @@ app.MapPost(
     "/chat",
     async (
         ChatRequest request,
-        ChatService chatService,
-        ChatClassifier classifier,
-        WikipediaSearchService searchService,
-        CharacterStateService stateService,
-        GPTSoVitsTtsService ttsService,
+        ChatResponseService responseService,
         ILogger<Program> logger,
         CancellationToken cancellationToken
     ) =>
@@ -81,86 +84,12 @@ app.MapPost(
             );
         }
 
-        GenerationProfile profile = classifier.Classify(request.Message);
-        SearchEvidence? evidence = null;
-
-        async Task<AICharacterResponse> GenerateResponseAsync()
-        {
-            if (profile.NeedsSearch)
-            {
-                try
-                {
-                    evidence = await searchService.SearchAsync(request.Message, cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "사실 검색 실패");
-                    evidence = new SearchEvidence([]);
-                }
-            }
-
-            return await chatService.SendAsync(request.Message, evidence, cancellationToken);
-        }
-
-        Task<AICharacterResponse> responseTask = GenerateResponseAsync();
-
-        if (profile.NeedsSearch)
-        {
-            await Task.WhenAny(
-                responseTask,
-                Task.Delay(TimeSpan.FromSeconds(1.2), cancellationToken));
-
-            if (!responseTask.IsCompleted)
-            {
-                string waitingLine = evidence == null
-                    ? "잠시만, 찾아볼게."
-                    : "생각 좀 해볼게.";
-                byte[]? waitingAudio = null;
-
-                try
-                {
-                    waitingAudio = await ttsService.GenerateAsync(waitingLine, cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "검색 안내 음성 생성 실패");
-                }
-
-                if (!responseTask.IsCompleted && waitingAudio is { Length: > 0 })
-                {
-                    long waitingMessageId = stateService.BeginResponse(
-                        waitingLine,
-                        "neutral",
-                        0.4f,
-                        segmentCount: 1);
-                    stateService.PublishAudioSegment(
-                        waitingMessageId,
-                        waitingLine,
-                        "neutral",
-                        0.4f,
-                        segmentIndex: 0,
-                        segmentCount: 1,
-                        segmentText: waitingLine,
-                        audio: waitingAudio,
-                        publishedVersion: out _);
-                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
-                }
-            }
-        }
-
-        AICharacterResponse response;
-
         try
         {
-            response = await responseTask;
+            ChatResponse response = await responseService.RespondAsync(
+                request.Message,
+                cancellationToken);
+            return Results.Ok(response);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -178,85 +107,6 @@ app.MapPost(
             );
         }
 
-        IReadOnlyList<string> segments = TtsTextSegmenter.Split(response.Text);
-        long messageId = stateService.BeginResponse(
-            response.Text,
-            response.Emotion,
-            response.Intensity,
-            segments.Count);
-
-        // ---------------------------------
-        // 2. GPT-SoVITS 음성을 어구별로 순차 생성한다.
-        //    각 조각은 완성되는 즉시 Unity에 공개된다.
-        // ---------------------------------
-        long audioVersion = 0;
-        for (int index = 0; index < segments.Count; index++)
-        {
-            string segment = segments[index];
-
-            try
-            {
-                byte[] audio = await ttsService.GenerateAsync(
-                    segment,
-                    cancellationToken);
-
-                bool published = stateService.PublishAudioSegment(
-                    messageId,
-                    response.Text,
-                    response.Emotion,
-                    response.Intensity,
-                    index,
-                    segments.Count,
-                    segment,
-                    audio,
-                    out long publishedVersion);
-
-                if (published)
-                {
-                    audioVersion = publishedVersion;
-                }
-
-                logger.LogInformation(
-                    "TTS 조각 생성 성공: {Current}/{Total}, {Bytes} bytes, Published: {Published}, Text: {Text}",
-                    index + 1,
-                    segments.Count,
-                    audio.Length,
-                    published,
-                    segment);
-
-                if (!published)
-                {
-                    break;
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // TTS가 실패해도 채팅 자체는 정상 동작하게 한다.
-                logger.LogWarning(
-                    ex,
-                    "GPT-SoVITS TTS 조각 생성 실패: {Current}/{Total}, Text: {Text}",
-                    index + 1,
-                    segments.Count,
-                    segment);
-                break;
-            }
-        }
-
-        // ---------------------------------
-        // 3. Browser Chat UI 응답
-        // ---------------------------------
-
-        return Results.Ok(
-            new ChatResponse(
-                response.Text,
-                evidence?.Hits,
-                audioVersion
-            )
-        );
     }
 );
 
@@ -287,9 +137,11 @@ app.MapPost(
 app.MapGet(
     "/unity/state",
     (
-        CharacterStateService stateService
+        CharacterStateService stateService,
+        PlaybackStatusService playback
     ) =>
     {
+        playback.ViewerHeartbeat();
         CharacterState state =
             stateService.Get();
 

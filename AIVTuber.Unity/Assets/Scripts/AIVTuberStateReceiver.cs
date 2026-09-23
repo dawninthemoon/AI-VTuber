@@ -10,7 +10,7 @@ public class AIVTuberStateReceiver : MonoBehaviour
     [Header("Server")]
     [SerializeField]
     private string serverBaseUrl =
-        "http://127.0.0.1:5000";
+        "http://127.0.0.1:5050";
 
     [SerializeField]
     private float pollingInterval = 0.25f;

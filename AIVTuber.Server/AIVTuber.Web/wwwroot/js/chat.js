@@ -52,9 +52,19 @@ async function sendMessage() {
         if (!response.ok) {
             const errorText = await response.text();
 
+            let errorMessage = "AI 응답 생성에 실패했습니다.";
+            try {
+                const problem = JSON.parse(errorText);
+                errorMessage = problem.detail || problem.title || errorMessage;
+            }
+            catch {
+                if (errorText) {
+                    errorMessage = errorText;
+                }
+            }
+
             throw new Error(
-                errorText ||
-                "채팅 요청에 실패했습니다.");
+                errorMessage);
         }
 
         const result = await response.json();
@@ -94,8 +104,9 @@ async function sendMessage() {
 
         thinkingBubble.classList.remove("thinking");
 
-        thinkingBubble.textContent =
-            "서버와 연결할 수 없습니다.";
+        thinkingBubble.textContent = error instanceof TypeError
+            ? "서버와 연결할 수 없습니다."
+            : error.message;
 
         console.error(error);
     }

@@ -120,7 +120,7 @@ public sealed class SpireContextBuilder
     private static IEnumerable<string> ReadChoices(JsonElement screenState)
     {
         // CommunicationMod/CJK uses different collections by screen type.
-        foreach (string property in new[] { "options", "choices", "rest_options", "cards", "relics", "potions" })
+        foreach (string property in new[] { "options", "choices", "rest_options", "cards", "relics", "potions", "hand" })
         {
             if (!TryGetProperty(screenState, property, out JsonElement items) || items.ValueKind != JsonValueKind.Array)
             {
@@ -131,13 +131,20 @@ public sealed class SpireContextBuilder
             {
                 string? label = item.ValueKind == JsonValueKind.String
                     ? item.GetString()
-                    : GetString(item, "name") ?? GetString(item, "text") ?? GetString(item, "id");
+                    : BuildChoiceLabel(item);
 
                 yield return string.IsNullOrWhiteSpace(label) ? "Unknown option" : label;
             }
 
             yield break;
         }
+    }
+
+    private static string? BuildChoiceLabel(JsonElement item)
+    {
+        string? name = GetString(item, "name") ?? GetString(item, "text") ?? GetString(item, "id");
+        string? description = GetString(item, "description");
+        return string.IsNullOrWhiteSpace(description) ? name : $"{name}: {description.ReplaceLineEndings(" ")}";
     }
 
     private static string BuildPrompt(SpireStateSnapshot snapshot, IReadOnlyList<SpireCard> hand, IReadOnlyList<SpireMonster> monsters, IReadOnlyList<SpireLegalAction> legalActions)

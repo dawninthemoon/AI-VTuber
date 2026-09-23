@@ -5,6 +5,9 @@ GPT_SOVITS_DIR="$HOME/GPT-SoVITS"
 GPT_SOVITS_CONDA_ENV="GPTSoVits"
 STT_CONDA_ENV="RealtimeSTT"
 
+# 대화 LLM과 Slay the Spire 의사결정에 사용하는 OpenAI API 키
+# export OPENAI_API_KEY="YOUR_API_KEY"
+
 # Conda 대신 기존 가상환경의 Python을 직접 지정할 수도 있습니다.
 # STT_PYTHON="$HOME/venvs/realtimestt/bin/python"
 # GPT_SOVITS_PYTHON="$HOME/GPT-SoVITS/.venv/bin/python"
@@ -13,7 +16,14 @@ STT_CONDA_ENV="RealtimeSTT"
 # CONDA_EXE="$HOME/miniforge3/bin/conda"
 
 # STT 설정을 변경하려면 export를 사용하세요.
-# export AIVTUBER_SERVER_URL="http://127.0.0.1:5000"
+# export AIVTUBER_SERVER_URL="http://127.0.0.1:5050"
 # export AIVTUBER_STT_MODEL="small"
 # export AIVTUBER_STT_DEVICE="cpu"
 # export AIVTUBER_STT_COMPUTE_TYPE="int8"
+
+# YouTube 라이브 채팅 자동 응답 (YouTube Data API v3 API 키 필요)
+# export YouTube__Enabled="true"
+# export YouTube__ApiKey="YOUR_API_KEY"
+# export YouTube__VideoId="YOUTUBE_VIDEO_ID"
+# export YouTube__IgnoreChannelId=""
+# export YouTube__TriggerPrefix=""

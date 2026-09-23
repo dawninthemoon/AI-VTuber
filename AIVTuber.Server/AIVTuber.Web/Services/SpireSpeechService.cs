@@ -8,15 +8,18 @@ public sealed class SpireSpeechService
     private readonly CharacterStateService _characterStateService;
     private readonly GPTSoVitsTtsService _ttsService;
     private readonly ILogger<SpireSpeechService> _logger;
+    private readonly IdleActivityService _activity;
 
     public SpireSpeechService(
         CharacterStateService characterStateService,
         GPTSoVitsTtsService ttsService,
-        ILogger<SpireSpeechService> logger)
+        ILogger<SpireSpeechService> logger,
+        IdleActivityService activity)
     {
         _characterStateService = characterStateService;
         _ttsService = ttsService;
         _logger = logger;
+        _activity = activity;
     }
 
     public void Publish(SpireModelDecision decision)
@@ -27,6 +30,7 @@ public sealed class SpireSpeechService
             return;
         }
 
+        _activity.Begin();
         speech = speech[..Math.Min(speech.Length, 180)];
         string emotion = NormalizeEmotion(decision.Emotion);
         float intensity = Math.Clamp(decision.Intensity, 0f, 1f);
@@ -54,6 +58,10 @@ public sealed class SpireSpeechService
         catch (Exception exception)
         {
             _logger.LogWarning(exception, "Spire speech TTS generation failed.");
+        }
+        finally
+        {
+            _activity.End();
         }
     }
 

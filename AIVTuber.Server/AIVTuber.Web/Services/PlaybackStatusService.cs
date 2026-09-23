@@ -6,6 +6,17 @@ public sealed class PlaybackStatusService
 {
     private readonly object _lock = new();
     private PlaybackStatus _status = new(false, DateTimeOffset.UtcNow);
+    private DateTimeOffset _viewerSeenAt = DateTimeOffset.MinValue;
+
+    public void ViewerHeartbeat()
+    {
+        lock (_lock) { _viewerSeenAt = DateTimeOffset.UtcNow; }
+    }
+
+    public bool ViewerConnected()
+    {
+        lock (_lock) { return DateTimeOffset.UtcNow - _viewerSeenAt < TimeSpan.FromSeconds(10); }
+    }
 
     public PlaybackStatus Get()
     {
