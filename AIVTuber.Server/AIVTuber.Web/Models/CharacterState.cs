@@ -10,5 +10,7 @@ public sealed record CharacterState(
     int SegmentIndex,
     int SegmentCount,
     string SegmentText,
-    bool IsIdle
+    bool IsIdle,
+    string SegmentDisplayText = "",
+    string SegmentSpeechText = ""
 );

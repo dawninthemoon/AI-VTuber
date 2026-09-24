@@ -267,7 +267,8 @@ public sealed class YouTubeLiveChatService : BackgroundService
                     _status.Message(message.Id, "processing");
                     _logger.LogInformation("Answering YouTube chat from {Author}: {Text}", message.AuthorName, message.Text);
                     var response = await _responseService.RespondAsync(
-                        $"유튜브 라이브 시청자 '{message.AuthorName}'의 채팅: {message.Text}", cancellationToken);
+                        $"유튜브 라이브 시청자 '{message.AuthorName}'의 채팅: {message.Text}",
+                        cancellationToken, SpeechSource.LiveChat);
                     // Generation completion is not proof that Unity played the audio.
                     _status.Message(message.Id, "response_ready", response.AudioVersion > 0 ? null : "no_audio");
                 }

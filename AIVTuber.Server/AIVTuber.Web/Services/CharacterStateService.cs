@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using AIVTuber.Web.Models;
 
 namespace AIVTuber.Web.Services;
@@ -7,6 +9,7 @@ public sealed class CharacterStateService
     private readonly object _lock = new();
     private readonly Dictionary<long, byte[]> _audioByVersion = [];
     private readonly Dictionary<long, bool> _idleByMessage = [];
+    private readonly Dictionary<long, List<SpokenSegment>> _segmentsByMessage = [];
     private long _lastMessageId;
 
     private CharacterState _state =
@@ -55,6 +58,7 @@ public sealed class CharacterStateService
             );
 
             _idleByMessage[messageId] = isIdle;
+            _segmentsByMessage[messageId] = [];
             _state = next;
             TrimAudioHistory(next.Version);
             return messageId;
@@ -70,7 +74,9 @@ public sealed class CharacterStateService
         int segmentCount,
         string segmentText,
         byte[] audio,
-        out long publishedVersion)
+        out long publishedVersion,
+        string? displayText = null,
+        string? speechText = null)
     {
         publishedVersion = 0;
         if (audio.Length == 0)
@@ -96,11 +102,15 @@ public sealed class CharacterStateService
                 SegmentIndex: segmentIndex,
                 SegmentCount: segmentCount,
                 SegmentText: segmentText,
-                IsIdle: _idleByMessage.GetValueOrDefault(messageId)
+                IsIdle: _idleByMessage.GetValueOrDefault(messageId),
+                SegmentDisplayText: displayText ?? segmentText,
+                SegmentSpeechText: speechText ?? segmentText
             );
 
             publishedVersion = next.Version;
             _audioByVersion[next.Version] = audio;
+            _segmentsByMessage[messageId].Add(
+                new SpokenSegment(next.Version, segmentIndex, speechText ?? segmentText));
             _state = next;
             TrimAudioHistory(next.Version);
             return true;
@@ -115,12 +125,52 @@ public sealed class CharacterStateService
         }
     }
 
+    // Playback progress is a best-effort estimate between Unity reports.
+    public string GetHeardText(long messageId, PlaybackStatus playback)
+    {
+        lock (_lock)
+        {
+            if (!_segmentsByMessage.TryGetValue(messageId, out List<SpokenSegment>? segments))
+                return "";
+
+            StringBuilder heard = new();
+            foreach (SpokenSegment segment in segments.OrderBy(item => item.Index))
+            {
+                string part;
+                if (segment.Version <= playback.CompletedVersion)
+                {
+                    part = segment.Text;
+                }
+                else if (segment.Version == playback.PlayingVersion && playback.ClipSeconds > 0)
+                {
+                    double ratio = Math.Clamp(playback.PlayedSeconds / playback.ClipSeconds, 0, 1);
+                    var text = new StringInfo(segment.Text);
+                    int count = (int)Math.Floor(text.LengthInTextElements * ratio);
+                    part = count > 0 ? text.SubstringByTextElements(0, count) : "";
+                }
+                else
+                {
+                    break;
+                }
+
+                if (part.Length > 0)
+                {
+                    if (heard.Length > 0) heard.Append(' ');
+                    heard.Append(part);
+                }
+                if (segment.Version > playback.CompletedVersion) break;
+            }
+            return heard.ToString().Trim();
+        }
+    }
+
     public void Reset()
     {
         lock (_lock)
         {
             _audioByVersion.Clear();
             _idleByMessage.Clear();
+            _segmentsByMessage.Clear();
             _state = new CharacterState(
                 Text: "",
                 Emotion: "neutral",
@@ -149,6 +199,9 @@ public sealed class CharacterStateService
         foreach (long messageId in _idleByMessage.Keys.Where(id => id < oldestMessageId).ToArray())
         {
             _idleByMessage.Remove(messageId);
+            _segmentsByMessage.Remove(messageId);
         }
     }
+
+    private sealed record SpokenSegment(long Version, int Index, string Text);
 }

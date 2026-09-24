@@ -10,28 +10,18 @@ public sealed class IdleBehaviorService(
     ChatService chat,
     GPTSoVitsTtsService tts,
     SpireTurnService spire,
+    SpeechTurnCoordinator speechTurns,
     IOptions<IdleOptions> options,
     ILogger<IdleBehaviorService> logger) : BackgroundService
 {
-    private static readonly string[] InterestTopics =
-    [
-        "게임 이야기. 실제로 플레이 중이라고 꾸미지 말고, 좋아하는 게임 요소나 해보고 싶은 게임에 관해 자연스럽게 혼잣말해.",
-        "만화나 애니메이션 이야기. 보지 않은 작품의 구체적인 내용을 지어내지 말고, 좋아하는 장르나 보고 싶은 작품 분위기를 이야기해.",
-        "음악 이야기. 락이나 J-POP 취향을 중심으로 듣고 싶은 음악, 밴드 사운드, 노래 분위기에 관해 이야기해.",
-        "디저트 이야기. 먹고 싶은 디저트, 좋아하는 맛이나 조합에 관해 가볍게 이야기해."
-    ];
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!options.Value.Enabled)
-        {
-            return;
-        }
-        TimeSpan delay = NextDelay();
+        if (!options.Value.Enabled) return;
+        var memory = new IdleMonologueMemory();
+        bool continuing = false;
+        TimeSpan initialDelay = NextDelay();
         long version = state.Get().Version;
         DateTimeOffset changedAt = DateTimeOffset.UtcNow;
-        var recentLines = new Queue<string>();
-        int previousTopic = -1;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
@@ -40,74 +30,122 @@ public sealed class IdleBehaviorService(
             {
                 version = current.Version;
                 changedAt = DateTimeOffset.UtcNow;
+                if (!current.IsIdle) continuing = false;
             }
-            if (!CanSpeak() || DateTimeOffset.UtcNow - changedAt < delay)
-            {
-                continue;
-            }
+            TimeSpan delay = continuing
+                ? TimeSpan.FromSeconds(Math.Clamp(options.Value.ContinuationPauseSeconds, 1, 30))
+                : initialDelay;
+            if (!CanSpeak() || DateTimeOffset.UtcNow - changedAt < delay) continue;
             var idle = activity.TryBegin(delay);
-            if (idle == null)
-            {
-                continue;
-            }
+            if (idle == null) continue;
+
+            bool acquired = false;
+            bool finished = false;
+            bool playbackUnavailable = false;
+            long messageId = 0, audioVersion = 0;
             try
             {
-                using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, idle.Token);
-                cancellation.CancelAfter(TimeSpan.FromSeconds(30));
+                // Only unpublished preparation can be cancelled by an incoming chat.
+                using var preparing = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, idle.Token);
+                preparing.CancelAfter(TimeSpan.FromSeconds(60));
+                await speechTurns.WaitAsync(SpeechSource.Idle, preparing.Token);
+                acquired = true;
+                CancellationToken speechInterrupt = speechTurns.ActiveCancellationToken;
+                using var activePreparation = CancellationTokenSource.CreateLinkedTokenSource(
+                    preparing.Token, speechInterrupt);
+                if (!CanSpeak() || state.Get().Version != version) continue;
                 var snapshot = spire.GetLastState();
-                int topicIndex;
-                do
-                {
-                    topicIndex = Random.Shared.Next(InterestTopics.Length);
-                }
-                while (topicIndex == previousTopic);
-                previousTopic = topicIndex;
-                string topic = InterestTopics[topicIndex];
-                // Only use observations that were actually received recently.
                 string game = snapshot != null && DateTimeOffset.UtcNow - snapshot.ReceivedAt < TimeSpan.FromSeconds(30)
                     ? System.Text.Json.JsonSerializer.Serialize(snapshot) : "없음";
-                var response = await chat.GenerateIdleAsync(topic, game, recentLines.ToArray(), cancellation.Token);
-                if (response == null || recentLines.Contains(response.Text))
+                AICharacterResponse? response = null;
+                // One retry for repetition; do not loop indefinitely spending API calls.
+                for (int attempt = 0; attempt < 2; attempt++)
                 {
-                    continue;
+                    response = await chat.GenerateIdleAsync(memory.NextDirection(), game, memory.Recent, activePreparation.Token);
+                    if (response != null && !memory.IsRepetitive(response.Text)) break;
+                    response = null;
                 }
-                byte[] audio = await tts.GenerateAsync(response.Text, cancellation.Token);
-                cancellation.Token.ThrowIfCancellationRequested();
-                if (audio.Length == 0 || !CanSpeak() || state.Get().Version != version)
+                if (response == null) continue;
+                var segments = TtsTextSegmenter.Split(response.Text);
+                if (segments.Count == 0) continue;
+                byte[] firstAudio = await tts.GenerateAsync(segments[0], activePreparation.Token);
+                activePreparation.Token.ThrowIfCancellationRequested();
+                if (firstAudio.Length == 0 || !CanSpeak() || state.Get().Version != version) continue;
+
+                // This atomic commit races safely with activity.Begin(). From here on,
+                // incoming chats wait on speechTurns while ALL segments finish.
+                if (!activity.Publish(() =>
                 {
-                    continue;
+                    messageId = state.BeginResponse(response.Text, response.Emotion,
+                        response.Intensity, segments.Count, isIdle: true);
+                    state.PublishAudioSegment(messageId, response.Text, response.Emotion, response.Intensity,
+                        0, segments.Count, segments[0], firstAudio, out audioVersion);
+                })) continue;
+
+                memory.Remember(response.Text);
+                logger.LogInformation("Idle paragraph started ({Segments} segments): {Text}", segments.Count, response.Text);
+                for (int index = 1; index < segments.Count; index++)
+                {
+                    // Prepare the next audio while the current segment is playing.
+                    // Do not use the pre-publication cancellation token here.
+                    using var generation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, speechInterrupt);
+                    generation.CancelAfter(TimeSpan.FromSeconds(60));
+                    byte[] audio = await tts.GenerateAsync(segments[index], generation.Token);
+                    if (!await WaitForPlaybackAsync(messageId, audioVersion, speechInterrupt))
+                    {
+                        playbackUnavailable = true;
+                        break;
+                    }
+                    if (!state.PublishAudioSegment(messageId, response.Text, response.Emotion, response.Intensity,
+                        index, segments.Count, segments[index], audio, out audioVersion)) break;
+                    if (index == segments.Count - 1) finished = true;
                 }
-                if (activity.Publish(() =>
-                {
-                    long id = state.BeginResponse(
-                        response.Text,
-                        response.Emotion,
-                        response.Intensity,
-                        isIdle: true);
-                    state.PublishAudioSegment(id, response.Text, response.Emotion, response.Intensity,
-                        0, 1, response.Text, audio, out _);
-                }))
-                {
-                    recentLines.Enqueue(response.Text);
-                    while (recentLines.Count > 8) recentLines.Dequeue();
-                    logger.LogInformation("Idle speech: {Text}", response.Text);
-                }
+                if (segments.Count == 1) finished = true;
             }
             catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
             {
-                // Chat or game speech takes priority; discard this idle response.
+                logger.LogDebug("Idle preparation cancelled or generation timed out.");
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                logger.LogWarning(error, "Idle speech failed; retrying after the next idle interval.");
+                logger.LogWarning(error, "Idle speech failed; waiting for published audio before handoff.");
             }
             finally
             {
-                activity.Finish();
-                delay = NextDelay();
-                changedAt = DateTimeOffset.UtcNow;
+                try
+                {
+                    // Includes failures halfway through TTS: drain audio already published.
+                    if (audioVersion > 0 && !playbackUnavailable && !stoppingToken.IsCancellationRequested)
+                        finished = await WaitForPlaybackAsync(messageId, audioVersion, stoppingToken) && finished;
+                }
+                finally
+                {
+                    activity.Finish();
+                    if (acquired) speechTurns.Release();
+                    continuing = finished;
+                    initialDelay = NextDelay();
+                    changedAt = DateTimeOffset.UtcNow;
+                    version = state.Get().Version;
+                }
             }
         }
+    }
+
+    private async Task<bool> WaitForPlaybackAsync(long messageId, long audioVersion, CancellationToken cancellationToken)
+    {
+        if (audioVersion <= 0) return false;
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(90);
+        while (state.Get().MessageId == messageId && playback.ViewerConnected())
+        {
+            if (playback.Get().CompletedVersion >= audioVersion) return true;
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                logger.LogWarning("Idle playback acknowledgement timed out for version {Version}; releasing the speech turn.", audioVersion);
+                return false;
+            }
+            await Task.Delay(100, cancellationToken);
+        }
+        return false;
     }
 
     private bool CanSpeak()

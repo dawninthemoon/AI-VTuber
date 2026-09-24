@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using AIVTuber.Web.Models;
 using Microsoft.Extensions.Options;
@@ -20,7 +21,8 @@ public sealed class OpenAiChatService
     public async Task<string> ChatAsync(
         IReadOnlyList<ChatMessage> messages,
         GenerationProfile profile,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<string, string, float, CancellationToken, Task>? onTextDelta = null)
     {
         if (!_options.ChatEnabled)
         {
@@ -45,6 +47,7 @@ public sealed class OpenAiChatService
         {
             model = _options.Model,
             store = false,
+            stream = onTextDelta != null,
             input = messages.Select(message => new
             {
                 role = message.Role == "system" ? "developer" : message.Role,
@@ -66,15 +69,15 @@ public sealed class OpenAiChatService
                         additionalProperties = false,
                         properties = new
                         {
-                            text = new { type = "string" },
                             emotion = new
                             {
                                 type = "string",
                                 @enum = new[] { "neutral", "happy", "angry", "sad", "surprised" }
                             },
-                            intensity = new { type = "number", minimum = 0, maximum = 1 }
+                            intensity = new { type = "number", minimum = 0, maximum = 1 },
+                            text = new { type = "string" }
                         },
-                        required = new[] { "text", "emotion", "intensity" }
+                        required = new[] { "emotion", "intensity", "text" }
                     }
                 }
             }
@@ -82,8 +85,12 @@ public sealed class OpenAiChatService
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(_options.RequestTimeoutSeconds, 1)));
-        using HttpResponseMessage response = await _httpClient.SendAsync(request, timeout.Token);
+        using HttpResponseMessage response = await _httpClient.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
+
+        if (onTextDelta != null)
+            return await ReadStreamingAsync(response, onTextDelta, timeout.Token);
 
         using JsonDocument document = await JsonDocument.ParseAsync(
             await response.Content.ReadAsStreamAsync(timeout.Token),
@@ -119,5 +126,68 @@ public sealed class OpenAiChatService
         }
 
         return "";
+    }
+
+    private static async Task<string> ReadStreamingAsync(
+        HttpResponseMessage response,
+        Func<string, string, float, CancellationToken, Task> onTextDelta,
+        CancellationToken cancellationToken)
+    {
+        using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using StreamReader reader = new(stream, Encoding.UTF8);
+        StreamingCharacterResponseParser parser = new();
+        StringBuilder eventData = new();
+        bool completed = false;
+
+        async Task ProcessEventAsync()
+        {
+            if (eventData.Length == 0) return;
+            string data = eventData.ToString();
+            eventData.Clear();
+            if (data == "[DONE]") return;
+
+            using JsonDocument document = JsonDocument.Parse(data);
+            JsonElement root = document.RootElement;
+            string? type = root.GetProperty("type").GetString();
+            if (type == "response.output_text.delta")
+            {
+                string decoded = parser.Feed(root.GetProperty("delta").GetString() ?? "");
+                if (decoded.Length > 0)
+                    await onTextDelta(decoded, parser.Emotion, parser.Intensity, cancellationToken);
+            }
+            else if (type == "response.output_text.done" && parser.RawJson.Length == 0 &&
+                     root.TryGetProperty("text", out JsonElement finalText))
+            {
+                string decoded = parser.Feed(finalText.GetString() ?? "");
+                if (decoded.Length > 0)
+                    await onTextDelta(decoded, parser.Emotion, parser.Intensity, cancellationToken);
+            }
+            else if (type == "response.completed")
+            {
+                completed = true;
+            }
+            else if (type is "response.failed" or "error")
+            {
+                throw new HttpRequestException($"OpenAI streaming response failed: {data}");
+            }
+        }
+
+        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        {
+            if (line.Length == 0)
+            {
+                await ProcessEventAsync();
+            }
+            else if (line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                if (eventData.Length > 0) eventData.Append('\n');
+                eventData.Append(line.AsSpan(5).TrimStart());
+            }
+        }
+        await ProcessEventAsync();
+        if (!completed)
+            throw new IOException("OpenAI streaming response ended before response.completed.");
+
+        return parser.RawJson;
     }
 }

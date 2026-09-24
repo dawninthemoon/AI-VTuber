@@ -8,6 +8,14 @@
 그 요청 처리 중 들어온 D는 다시 다음 차례로 모읍니다.
 기존의 2초 이내 동일 인식 결과 중복 제거는 유지합니다.
 
+특정 단어를 치환하지 않고 모델의 인식 결과를 그대로 서버에 보냅니다.
+NVIDIA CUDA GPU를 사용할 수 있으면 다국어 Whisper `turbo` 모델을
+`int8_float16`으로 사용하고, 그렇지 않으면 기존 `small`/CPU/`int8` 설정을
+사용합니다. 첫 `turbo` 실행에서는 약 1.6GB의 모델 파일이 다운로드됩니다.
+`AIVTUBER_STT_MODEL`, `AIVTUBER_STT_DEVICE`, `AIVTUBER_STT_COMPUTE_TYPE`
+환경 변수로 모델과 실행 장치를 직접 지정할 수 있습니다. 변경 사항은 STT를
+다시 시작해야 적용됩니다.
+
 서버는 `/chat` 응답의 `audioVersion`으로 마지막 생성 음성을 알려주고,
 Unity는 `/voice/playback`의 `completedVersion`으로 재생 완료를 알립니다.
 마지막 음성 완료 및 재생하지 않는 상태가 0.8초 유지되어야 다음 요청을 보냅니다.

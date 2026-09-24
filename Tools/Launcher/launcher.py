@@ -1,5 +1,6 @@
 """Cross-platform local service launcher. Python 3.10+ with Tk required."""
 import json
+import locale
 import os
 from pathlib import Path
 import plistlib
@@ -143,6 +144,7 @@ def command_for(name, settings):
         return ["dotnet", "run", "--project", str(ROOT / "AIVTuber.Server/AIVTuber.Web/AIVTuber.Web.csproj"),
                 "--no-launch-profile", "--urls", "http://127.0.0.1:5050"], ROOT, env
     if name == "sovits":
+        env["PYTHONIOENCODING"] = "utf-8"
         folder = Path(settings["sovits_dir"])
         if not (folder / "api_v2.py").is_file():
             raise ValueError("GPT-SoVITS 폴더에 api_v2.py가 없습니다.")
@@ -150,6 +152,7 @@ def command_for(name, settings):
         executable = settings["sovits_python"] or (str(runtime) if WINDOWS and runtime.is_file() else "")
         return python_command(executable, "GPTSoVits") + ["api_v2.py", "-a", "127.0.0.1", "-p", "9881"], folder, env
     if name == "stt":
+        env["PYTHONIOENCODING"] = "utf-8"
         if not WINDOWS:
             env.setdefault("AIVTUBER_STT_DEVICE", "cpu")
             env.setdefault("AIVTUBER_STT_COMPUTE_TYPE", "int8")
@@ -159,6 +162,13 @@ def command_for(name, settings):
         raise ValueError("ModTheSpire.jar 파일을 선택하세요. CommunicationMod 설정도 필요합니다.")
     java = java_command_for_spire(jar)
     return [java, "-jar", str(jar)], jar.parent, env
+
+
+def decode_log_line(raw):
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode(locale.getpreferredencoding(False), errors="replace")
 
 
 def stop_process(process):
@@ -187,6 +197,8 @@ class Launcher(tk.Tk):
         self.minsize(740, 650)
         self.events = queue.Queue(maxsize=2000)
         self.processes = {}
+        self.run_ids = {name: 0 for name in ("web", "sovits", "stt", "spire")}
+        self.log_epochs = {name: 0 for name in self.run_ids}
         self.stopping = set()
         self.closing = False
         self.settings = DEFAULTS.copy()
@@ -250,6 +262,7 @@ class Launcher(tk.Tk):
         ttk.Button(body, text="웹 채팅 열기 (:5050)", command=lambda: webbrowser.open("http://127.0.0.1:5050")).pack(anchor="w", pady=6)
         self.notice = ttk.Label(body, text="Python 경로를 비우면 Conda 환경 GPTSoVits / RealtimeSTT를 사용합니다.")
         self.notice.pack(anchor="w")
+        ttk.Button(body, text="현재 탭 로그 지우기", command=self.clear_selected_log).pack(anchor="e")
         self.log_tabs = ttk.Notebook(body)
         self.log_tabs.pack(fill="both", expand=True, pady=(8, 0))
         self.logs = {}
@@ -262,6 +275,7 @@ class Launcher(tk.Tk):
             log.pack(side="left", fill="both", expand=True)
             scroll.pack(side="right", fill="y")
             self.bind_console_shortcuts(log)
+            self.bind_console_scroll(log, scroll)
             self.log_tabs.add(frame, text=label)
             self.logs[name] = log
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -288,10 +302,55 @@ class Launcher(tk.Tk):
         console.bind("<Button-3>", show_menu)
 
     @staticmethod
+    def bind_console_scroll(console, scrollbar):
+        def wheel(event):
+            if event.delta:
+                steps = max(1, abs(event.delta) // 120) * (3 if WINDOWS else 1)
+                console.yview_scroll(-steps if event.delta > 0 else steps, "units")
+            return "break"
+
+        def button_wheel(event):
+            console.yview_scroll(-3 if event.num == 4 else 3, "units")
+            return "break"
+
+        for widget in (console, scrollbar):
+            widget.bind("<MouseWheel>", wheel)
+            widget.bind("<Button-4>", button_wheel)
+            widget.bind("<Button-5>", button_wheel)
+
+    def clear_selected_log(self):
+        name = list(self.logs)[self.log_tabs.index("current")]
+        self.clear_log(name)
+
+    def clear_log(self, name):
+        self.log_epochs[name] += 1
+        log = self.logs[name]
+        log.configure(state="normal")
+        log.delete("1.0", "end")
+        log.configure(state="disabled")
+
+    def append_log(self, name, text):
+        log = self.logs[name]
+        at_bottom = log.yview()[1] >= 0.999
+        if not at_bottom:
+            log.mark_set("saved_view_top", log.index("@0,0"))
+            log.mark_gravity("saved_view_top", "left")
+        log.configure(state="normal")
+        log.insert("end", text)
+        line_count = int(log.index("end-1c").split(".")[0])
+        if line_count > 1500:
+            log.delete("1.0", f"{line_count - 1200}.0")
+        log.configure(state="disabled")
+        if at_bottom:
+            log.see("end")
+        else:
+            log.yview("saved_view_top")
+            log.mark_unset("saved_view_top")
+
+    @staticmethod
     def console_select_all(console):
         console.tag_add("sel", "1.0", "end-1c")
         console.mark_set("insert", "end-1c")
-        console.see("insert")
         return "break"
 
     def console_copy(self, console):
@@ -361,21 +420,24 @@ class Launcher(tk.Tk):
             process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **options)
             self.processes[name] = process
+            self.run_ids[name] += 1
+            run_id = self.run_ids[name]
+            self.clear_log(name)
             self.log_tabs.select(list(self.logs).index(name))
             self.buttons[name][0].configure(text=self.buttons[name][1] + " 종료")
             self.status[name].configure(text="실행 중 (로그 확인)")
             secrets = [self.settings[k] for k in ("youtube_key", "openai_key") if self.settings[k]]
-            threading.Thread(target=self.read_log, args=(name, process, secrets), daemon=True).start()
+            threading.Thread(target=self.read_log, args=(name, run_id, process, secrets), daemon=True).start()
         except (ValueError, OSError) as error:
             messagebox.showerror("실행 실패", str(error))
 
-    def read_log(self, name, process, secrets):
+    def read_log(self, name, run_id, process, secrets):
         with process.stdout:
             for raw in iter(process.stdout.readline, b""):
-                line = raw.decode("utf-8", errors="replace")
+                line = decode_log_line(raw)
                 for secret in secrets:
                     line = line.replace(secret, "****")
-                self.emit(("log", name, line))
+                self.emit(("log", name, run_id, self.log_epochs[name], line))
 
     def stop(self, name):
         if name in self.stopping:
@@ -383,22 +445,26 @@ class Launcher(tk.Tk):
         self.stopping.add(name)
         self.buttons[name][0].configure(state="disabled")
         self.status[name].configure(text="종료 중…")
-        threading.Thread(target=self.stop_worker, args=(name, self.processes[name]), daemon=True).start()
+        threading.Thread(target=self.stop_worker,
+                         args=(name, self.run_ids[name], self.processes[name]), daemon=True).start()
 
-    def stop_worker(self, name, process):
+    def stop_worker(self, name, run_id, process):
         try:
             stop_process(process)
         except (OSError, subprocess.SubprocessError) as error:
-            self.emit(("log", name, "종료 실패: " + str(error) + "\n"))
+            self.emit(("log", name, run_id, self.log_epochs[name], "종료 실패: " + str(error) + "\n"))
         finally:
-            self.events.put(("stopped", name, ""))
+            self.events.put(("stopped", name, run_id, None, ""))
 
     def pump(self):
+        pending_logs = {}
         for _ in range(200):
             try:
-                kind, name, text = self.events.get_nowait()
+                kind, name, run_id, log_epoch, text = self.events.get_nowait()
             except queue.Empty:
                 break
+            if run_id != self.run_ids[name]:
+                continue
             if kind == "stopped":
                 self.stopping.discard(name)
                 process = self.processes.get(name)
@@ -406,14 +472,10 @@ class Launcher(tk.Tk):
                     self.closing = False
                     self.buttons[name][0].configure(state="normal")
                     self.status[name].configure(text="종료 실패 · 다시 시도")
-            else:
-                log = self.logs[name]
-                log.configure(state="normal")
-                log.insert("end", text)
-                if int(log.index("end-1c").split(".")[0]) > 1500:
-                    log.delete("1.0", "300.0")
-                log.see("end")
-                log.configure(state="disabled")
+            elif log_epoch == self.log_epochs[name]:
+                pending_logs.setdefault(name, []).append(text)
+        for name, lines in pending_logs.items():
+            self.append_log(name, "".join(lines))
         for name, process in list(self.processes.items()):
             if process.poll() is not None and name not in self.stopping:
                 del self.processes[name]

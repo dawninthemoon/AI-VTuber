@@ -45,6 +45,7 @@ builder.Services.AddSingleton<ChatService>();
 builder.Services.AddSingleton<CharacterStateService>();
 builder.Services.AddSingleton<PlaybackStatusService>();
 builder.Services.AddSingleton<SpeechTurnCoordinator>();
+builder.Services.AddSingleton<SpeechPlaybackWaiter>();
 builder.Services.AddSingleton<SpireContextBuilder>();
 builder.Services.AddSingleton<OpenAiSpireDecisionService>();
 builder.Services.AddSingleton<SpireSpeechService>();
@@ -98,6 +99,10 @@ app.MapPost(
         {
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            return Results.Conflict(new { error = "발화가 중단되었습니다." });
+        }
         catch (Exception ex)
         {
             logger.LogError(
@@ -119,15 +124,17 @@ app.MapPost(
 
 app.MapPost(
     "/chat/reset",
-    (
+    async (
         ChatService chatService,
         CharacterStateService stateService,
-        PlaybackStatusService playbackStatusService
+        PlaybackStatusService playbackStatusService,
+        SpeechTurnCoordinator speechTurns
     ) =>
     {
-        chatService.Reset();
+        speechTurns.InterruptCurrent();
         stateService.Reset();
         playbackStatusService.Set(false);
+        await chatService.ResetAsync();
 
         return Results.Ok();
     }
@@ -196,7 +203,8 @@ app.MapPost(
         PlaybackStatusService playbackStatusService
     ) =>
     {
-        playbackStatusService.Set(request.Speaking, request.CompletedVersion);
+        playbackStatusService.Set(request.Speaking, request.CompletedVersion,
+            request.PlayingVersion, request.PlayedSeconds, request.ClipSeconds);
         return Results.Ok(playbackStatusService.Get());
     }
 );
@@ -249,6 +257,33 @@ app.MapGet(
     "/voice/playback",
     (PlaybackStatusService playbackStatusService) =>
         Results.Ok(playbackStatusService.Get())
+);
+
+// Explicit interruption stops Unity playback and keeps only the estimated
+// spoken portion of a chat response in conversation memory.
+app.MapPost(
+    "/voice/interrupt",
+    async (
+        CharacterStateService stateService,
+        PlaybackStatusService playbackStatusService,
+        SpeechTurnCoordinator speechTurns,
+        ChatService chatService) =>
+    {
+        CharacterState current = stateService.Get();
+        PlaybackStatus playback = playbackStatusService.Get();
+        bool unfinished = current.HasAudio && playback.CompletedVersion < current.Version;
+        string heardText = unfinished
+            ? stateService.GetHeardText(current.MessageId, playback)
+            : "";
+
+        speechTurns.InterruptCurrent();
+        stateService.Reset();
+        playbackStatusService.Set(false);
+        bool historyUpdated = unfinished && await chatService.RecordInterruptionAsync(
+            current.MessageId, current.Text, heardText);
+
+        return Results.Ok(new { current.MessageId, heardText, historyUpdated });
+    }
 );
 
 // -----------------------------

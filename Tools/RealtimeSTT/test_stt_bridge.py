@@ -105,6 +105,31 @@ class PendingSpeechTests(unittest.TestCase):
         self.assertEqual(queue.take(), "다음 문장")
         self.assertEqual(queue.take(), "")
 
+    def test_transcript_is_not_rewritten(self):
+        bridge = self.bridge
+        bridge.pending_speech.add("조회가 있냐고 조회가")
+        self.assertEqual(bridge.pending_speech.take(), "조회가 있냐고 조회가")
+
+    def test_gpu_uses_higher_accuracy_model(self):
+        bridge = self.bridge
+        ctranslate2 = types.ModuleType("ctranslate2")
+        ctranslate2.get_cuda_device_count = Mock(return_value=1)
+        with patch.dict(bridge.os.environ, {}, clear=True), patch.dict(sys.modules, ctranslate2=ctranslate2):
+            self.assertEqual(bridge.stt_runtime_settings(), ("turbo", "cuda", "int8_float16"))
+
+    def test_cpu_fallback_and_explicit_overrides(self):
+        bridge = self.bridge
+        ctranslate2 = types.ModuleType("ctranslate2")
+        ctranslate2.get_cuda_device_count = Mock(return_value=0)
+        with patch.dict(bridge.os.environ, {}, clear=True), patch.dict(sys.modules, ctranslate2=ctranslate2):
+            self.assertEqual(bridge.stt_runtime_settings(), ("small", "cpu", "int8"))
+        with patch.dict(bridge.os.environ, {
+            "AIVTUBER_STT_MODEL": "medium",
+            "AIVTUBER_STT_DEVICE": "cpu",
+            "AIVTUBER_STT_COMPUTE_TYPE": "int8",
+        }, clear=True):
+            self.assertEqual(bridge.stt_runtime_settings(), ("medium", "cpu", "int8"))
+
 
 if __name__ == "__main__":
     unittest.main()

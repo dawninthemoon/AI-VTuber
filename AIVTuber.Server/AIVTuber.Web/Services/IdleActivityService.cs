@@ -6,6 +6,7 @@ public sealed class IdleActivityService
     private DateTimeOffset _lastActivity = DateTimeOffset.UtcNow;
     private int _busy;
     private CancellationTokenSource? _idle;
+    private bool _idleCommitted;
 
     public void Begin()
     {
@@ -13,7 +14,9 @@ public sealed class IdleActivityService
         {
             _busy++;
             _lastActivity = DateTimeOffset.UtcNow;
-            _idle?.Cancel();
+            // Preparing idle speech may be cancelled. Once published, finish the
+            // whole response (including all audio segments) before handing off.
+            if (!_idleCommitted) _idle?.Cancel();
         }
     }
 
@@ -44,6 +47,7 @@ public sealed class IdleActivityService
         {
             _idle?.Dispose();
             _idle = null;
+            _idleCommitted = false;
             _lastActivity = DateTimeOffset.UtcNow;
         }
     }
@@ -52,11 +56,12 @@ public sealed class IdleActivityService
     {
         lock (_gate)
         {
-            if (_busy > 0 || _idle == null || _idle.IsCancellationRequested)
+            if ((!_idleCommitted && _busy > 0) || _idle == null || _idle.IsCancellationRequested)
             {
                 return false;
             }
             publish();
+            _idleCommitted = true;
             return true;
         }
     }

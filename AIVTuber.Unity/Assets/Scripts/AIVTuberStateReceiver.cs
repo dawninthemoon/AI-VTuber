@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -35,7 +36,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     private long lastVersion = -1;
     private long activeMessageId = -1;
-    private bool activeMessageIsIdle;
     private readonly HashSet<long> interruptedMessageIds =
         new HashSet<long>();
 
@@ -48,6 +48,9 @@ public class AIVTuberStateReceiver : MonoBehaviour
     private long playingVersion;
     private long completedVersion;
     private long reportedCompletedVersion = -1;
+    private long reportedPlayingVersion = -1;
+    private float reportedPlayedSeconds = -1f;
+    private float lastProgressReportAt = -1f;
     private int pendingDownloads;
     private bool sendingPlaybackStatus;
 
@@ -131,6 +134,11 @@ public class AIVTuberStateReceiver : MonoBehaviour
         if (subtitleText != null)
         {
             subtitleText.text = segment.text;
+        }
+
+        if (emotionController != null)
+        {
+            emotionController.SetEmotion(segment.emotion, segment.intensity);
         }
 
         audioSource.clip = downloadedClip;
@@ -247,13 +255,9 @@ public class AIVTuberStateReceiver : MonoBehaviour
         // Emotion
         // ------------------------
 
-        if (emotionController != null)
-        {
-            emotionController.SetEmotion(
-                state.emotion,
-                state.intensity
-            );
-        }
+        if (emotionController != null &&
+            string.IsNullOrWhiteSpace(state.text) && state.segmentCount == 0)
+            emotionController.SetEmotion("neutral", 0.5f);
 
 
         // ------------------------
@@ -273,9 +277,9 @@ public class AIVTuberStateReceiver : MonoBehaviour
                 string.IsNullOrWhiteSpace(state.text) &&
                 state.segmentCount == 0;
 
-            // Normal chat/game speech finishes in queue order. Only idle speech
-            // is interruptible by a real response; an explicit reset also stops all audio.
-            if ((activeMessageIsIdle && !state.isIdle) || isReset)
+            // Finish already-started speech, including idle segments, in queue order.
+            // Only an explicit conversation reset interrupts audio.
+            if (isReset)
             {
                 if (activeMessageId >= 0)
                 {
@@ -287,7 +291,6 @@ public class AIVTuberStateReceiver : MonoBehaviour
             }
 
             activeMessageId = state.messageId;
-            activeMessageIsIdle = state.isIdle;
 
             if (isReset && subtitleText != null)
             {
@@ -306,7 +309,10 @@ public class AIVTuberStateReceiver : MonoBehaviour
             DownloadVoiceSegment(
                 state.version,
                 state.messageId,
-                state.segmentText
+                string.IsNullOrEmpty(state.segmentDisplayText)
+                    ? state.segmentText : state.segmentDisplayText,
+                state.emotion,
+                state.intensity
             )
         );
         voiceCoroutines.Add(coroutine);
@@ -316,7 +322,9 @@ public class AIVTuberStateReceiver : MonoBehaviour
     private IEnumerator DownloadVoiceSegment(
         long version,
         long messageId,
-        string segmentText)
+        string displayText,
+        string emotion,
+        float intensity)
     {
         if (audioSource == null)
         {
@@ -362,8 +370,10 @@ public class AIVTuberStateReceiver : MonoBehaviour
         voiceQueue.Enqueue(
             new VoiceSegment(
                 clip,
-                segmentText,
-                version
+                displayText,
+                version,
+                emotion,
+                intensity
             )
         );
         Debug.Log(
@@ -404,19 +414,37 @@ public class AIVTuberStateReceiver : MonoBehaviour
 
     private void ReportPlaybackStatus(bool speaking)
     {
-        if (!isActiveAndEnabled || sendingPlaybackStatus ||
-            (reportedSpeaking == speaking && reportedCompletedVersion == completedVersion))
+        if (!isActiveAndEnabled || sendingPlaybackStatus)
         {
             return;
         }
 
+        bool playing = speaking && audioSource != null && audioSource.isPlaying;
+        long activeVersion = playing ? playingVersion : 0;
+        float playedSeconds = playing ? audioSource.time : 0f;
+        float clipSeconds = playing && audioSource.clip != null ? audioSource.clip.length : 0f;
+        bool progressDue = activeVersion > 0 &&
+            (activeVersion != reportedPlayingVersion ||
+             playedSeconds - reportedPlayedSeconds >= 0.35f) &&
+            Time.unscaledTime - lastProgressReportAt >= 0.25f;
+        if (reportedSpeaking == speaking &&
+            reportedCompletedVersion == completedVersion &&
+            reportedPlayingVersion == activeVersion && !progressDue)
+            return;
+
         sendingPlaybackStatus = true;
-        StartCoroutine(SendPlaybackStatus(speaking, completedVersion));
+        StartCoroutine(SendPlaybackStatus(
+            speaking, completedVersion, activeVersion, playedSeconds, clipSeconds));
     }
 
-    private IEnumerator SendPlaybackStatus(bool speaking, long finishedVersion)
+    private IEnumerator SendPlaybackStatus(
+        bool speaking, long finishedVersion, long activeVersion,
+        float playedSeconds, float clipSeconds)
     {
-        string json = $"{{\"speaking\":{speaking.ToString().ToLowerInvariant()},\"completedVersion\":{finishedVersion}}}";
+        string json = $"{{\"speaking\":{speaking.ToString().ToLowerInvariant()}," +
+            $"\"completedVersion\":{finishedVersion},\"playingVersion\":{activeVersion}," +
+            $"\"playedSeconds\":{playedSeconds.ToString(CultureInfo.InvariantCulture)}," +
+            $"\"clipSeconds\":{clipSeconds.ToString(CultureInfo.InvariantCulture)}}}";
 
         using UnityWebRequest request = new UnityWebRequest(
             PlaybackStatusUrl,
@@ -433,6 +461,9 @@ public class AIVTuberStateReceiver : MonoBehaviour
         {
             reportedSpeaking = speaking;
             reportedCompletedVersion = finishedVersion;
+            reportedPlayingVersion = activeVersion;
+            reportedPlayedSeconds = playedSeconds;
+            lastProgressReportAt = Time.unscaledTime;
         }
         else
         {
@@ -469,15 +500,21 @@ public class AIVTuberStateReceiver : MonoBehaviour
         public readonly AudioClip clip;
         public readonly string text;
         public readonly long version;
+        public readonly string emotion;
+        public readonly float intensity;
 
         public VoiceSegment(
             AudioClip clip,
             string text,
-            long version)
+            long version,
+            string emotion,
+            float intensity)
         {
             this.clip = clip;
             this.text = text;
             this.version = version;
+            this.emotion = emotion;
+            this.intensity = intensity;
         }
     }
 
@@ -494,6 +531,8 @@ public class AIVTuberStateReceiver : MonoBehaviour
         public int segmentIndex;
         public int segmentCount;
         public string segmentText;
+        public string segmentDisplayText;
+        public string segmentSpeechText;
         public bool isIdle;
     }
 }

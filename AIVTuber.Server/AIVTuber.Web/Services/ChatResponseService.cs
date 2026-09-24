@@ -1,4 +1,5 @@
 using AIVTuber.Web.Models;
+using System.Text;
 
 namespace AIVTuber.Web.Services;
 
@@ -15,8 +16,10 @@ public sealed class ChatResponseService
     private readonly GPTSoVitsTtsService _ttsService;
     private readonly ILogger<ChatResponseService> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly SemaphoreSlim _ttsPreparationSlots = new(2, 2);
     private readonly IdleActivityService _activity;
     private readonly SpeechTurnCoordinator _speechTurns;
+    private readonly SpeechPlaybackWaiter _playbackWaiter;
 
     public ChatResponseService(
         ChatService chatService,
@@ -26,7 +29,8 @@ public sealed class ChatResponseService
         GPTSoVitsTtsService ttsService,
         ILogger<ChatResponseService> logger,
         IdleActivityService activity,
-        SpeechTurnCoordinator speechTurns)
+        SpeechTurnCoordinator speechTurns,
+        SpeechPlaybackWaiter playbackWaiter)
     {
         _chatService = chatService;
         _classifier = classifier;
@@ -36,11 +40,13 @@ public sealed class ChatResponseService
         _logger = logger;
         _activity = activity;
         _speechTurns = speechTurns;
+        _playbackWaiter = playbackWaiter;
     }
 
     public async Task<ChatResponse> RespondAsync(
         string message,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        SpeechSource source = SpeechSource.DirectChat)
     {
         if (string.IsNullOrWhiteSpace(message))
         {
@@ -50,12 +56,51 @@ public sealed class ChatResponseService
         _activity.Begin();
         bool acquired = false;
         bool speechTurnAcquired = false;
+        long publishedMessageId = 0;
+        long audioVersion = 0;
+        CancellationTokenSource? speculative = null;
+        List<(string Text, Task<byte[]?> Audio)> prepared = [];
         try
         {
+            await _speechTurns.WaitAsync(source, cancellationToken);
+            speechTurnAcquired = true;
+            using var activeTurn = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _speechTurns.ActiveCancellationToken);
+            cancellationToken = activeTurn.Token;
+            speculative = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            StreamingTtsSegmenter streamSegments = new();
+            StringBuilder streamedText = new();
+
+            async Task<byte[]?> PrepareAudioAsync(string text)
+            {
+                try
+                {
+                    await _ttsPreparationSlots.WaitAsync(speculative.Token);
+                    try { return await _ttsService.GenerateAsync(text, speculative.Token); }
+                    finally { _ttsPreparationSlots.Release(); }
+                }
+                catch (OperationCanceledException) when (speculative.IsCancellationRequested)
+                {
+                    return null;
+                }
+                catch (Exception error)
+                {
+                    _logger.LogWarning(error, "Speculative TTS failed for {Text}.", text);
+                    return null;
+                }
+            }
+
+            void QueuePrepared(string text) => prepared.Add((text, PrepareAudioAsync(text)));
+
+            Task OnTextDeltaAsync(string delta, string emotion, float intensity, CancellationToken _)
+            {
+                streamedText.Append(delta);
+                foreach (string segment in streamSegments.Push(delta)) QueuePrepared(segment);
+                return Task.CompletedTask;
+            }
+
             await _lock.WaitAsync(cancellationToken);
             acquired = true;
-            await _speechTurns.WaitAsync(cancellationToken);
-            speechTurnAcquired = true;
             GenerationProfile profile = _classifier.Classify(message);
             SearchEvidence? evidence = null;
 
@@ -78,7 +123,8 @@ public sealed class ChatResponseService
                     }
                 }
 
-                return await _chatService.SendAsync(message, evidence, cancellationToken);
+                return await _chatService.SendAsync(
+                    message, evidence, cancellationToken, OnTextDeltaAsync);
             }
 
             Task<AICharacterResponse> responseTask = GenerateResponseAsync();
@@ -114,30 +160,61 @@ public sealed class ChatResponseService
                         _stateService.PublishAudioSegment(
                             waitingMessageId, waitingLine, "neutral", 0.4f,
                             segmentIndex: 0, segmentCount: 1, segmentText: waitingLine,
-                            audio: waitingAudio, publishedVersion: out _);
-                        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                            audio: waitingAudio, publishedVersion: out long waitingVersion);
+                        publishedMessageId = waitingMessageId;
+                        audioVersion = waitingVersion;
                     }
                 }
             }
 
             AICharacterResponse response = await responseTask;
-            IReadOnlyList<string> segments = TtsTextSegmenter.Split(response.Text);
+            bool usePrepared = streamedText.Length > 0 &&
+                string.Equals(streamedText.ToString().Trim(), response.Text, StringComparison.Ordinal);
+            if (usePrepared)
+            {
+                string tail = streamSegments.Flush();
+                if (tail.Length > 0) QueuePrepared(tail);
+            }
+            else
+            {
+                speculative.Cancel();
+            }
+            if (audioVersion > 0)
+            {
+                await _playbackWaiter.WaitAsync(publishedMessageId, audioVersion, cancellationToken);
+            }
+            IReadOnlyList<string> segments = usePrepared
+                ? prepared.Select(item => item.Text).ToArray()
+                : TtsTextSegmenter.Split(response.Text);
             long messageId = _stateService.BeginResponse(
                 response.Text, response.Emotion, response.Intensity, segments.Count);
+            _chatService.RegisterAudioMessage(messageId);
+            publishedMessageId = messageId;
+            audioVersion = 0;
 
-            long audioVersion = 0;
             for (int index = 0; index < segments.Count; index++)
             {
                 string segment = segments[index];
                 try
                 {
-                    byte[] audio = await _ttsService.GenerateAsync(segment, cancellationToken);
+                    byte[]? audio = usePrepared
+                        ? await prepared[index].Audio
+                        : await _ttsService.GenerateAsync(segment, cancellationToken);
+                    if (audio is not { Length: > 0 } && usePrepared)
+                        audio = await _ttsService.GenerateAsync(segment, cancellationToken);
+                    if (audio is not { Length: > 0 }) break;
+                    // Generate the next clip while the current one plays, then
+                    // publish only after Unity has consumed the previous version.
+                    if (audioVersion > 0 && publishedMessageId == messageId &&
+                        !await _playbackWaiter.WaitAsync(messageId, audioVersion, cancellationToken))
+                        break;
                     bool published = _stateService.PublishAudioSegment(
                         messageId, response.Text, response.Emotion, response.Intensity,
                         index, segments.Count, segment, audio, out long publishedVersion);
 
                     if (published)
                     {
+                        publishedMessageId = messageId;
                         audioVersion = publishedVersion;
                     }
 
@@ -167,9 +244,33 @@ public sealed class ChatResponseService
         }
         finally
         {
-            if (speechTurnAcquired) _speechTurns.Release();
+            speculative?.Cancel();
+            speculative?.Dispose();
+            if (speechTurnAcquired)
+            {
+                if (audioVersion > 0)
+                    _ = ReleaseAfterPlaybackAsync(publishedMessageId, audioVersion);
+                else
+                    _speechTurns.Release();
+            }
             if (acquired) _lock.Release();
             _activity.End();
+        }
+    }
+
+    private async Task ReleaseAfterPlaybackAsync(long messageId, long audioVersion)
+    {
+        try
+        {
+            await _playbackWaiter.WaitAsync(messageId, audioVersion);
+        }
+        catch (Exception error)
+        {
+            _logger.LogWarning(error, "Could not confirm Unity playback for version {Version}.", audioVersion);
+        }
+        finally
+        {
+            _speechTurns.Release();
         }
     }
 }

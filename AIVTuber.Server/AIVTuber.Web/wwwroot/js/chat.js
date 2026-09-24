@@ -2,6 +2,7 @@ const chat = document.getElementById("chat");
 const input = document.getElementById("message");
 const sendButton = document.getElementById("sendButton");
 const resetButton = document.getElementById("resetButton");
+const interruptButton = document.getElementById("interruptButton");
 
 let isSending = false;
 
@@ -18,6 +19,7 @@ input.addEventListener("keydown", event => {
 
 sendButton.addEventListener("click", sendMessage);
 resetButton.addEventListener("click", resetChat);
+interruptButton.addEventListener("click", interruptSpeech);
 
 async function sendMessage() {
     const message = input.value.trim();
@@ -55,7 +57,7 @@ async function sendMessage() {
             let errorMessage = "AI 응답 생성에 실패했습니다.";
             try {
                 const problem = JSON.parse(errorText);
-                errorMessage = problem.detail || problem.title || errorMessage;
+                errorMessage = problem.detail || problem.error || problem.title || errorMessage;
             }
             catch {
                 if (errorText) {
@@ -213,6 +215,24 @@ async function resetChat() {
 
         chat.innerHTML = "";
         input.focus();
+    }
+    catch (error) {
+        console.error(error);
+    }
+}
+
+async function interruptSpeech() {
+    try {
+        const response = await fetch("/voice/interrupt", { method: "POST" });
+        if (!response.ok) throw new Error("음성을 중단하지 못했습니다.");
+        const result = await response.json();
+        const messages = chat.querySelectorAll(".message.ai:not(.thinking)");
+        const lastMessage = messages[messages.length - 1];
+        if (result.historyUpdated && lastMessage) {
+            lastMessage.textContent = result.heardText
+                ? `${result.heardText}…`
+                : "음성이 재생되기 전에 중단됐습니다.";
+        }
     }
     catch (error) {
         console.error(error);

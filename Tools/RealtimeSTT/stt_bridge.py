@@ -13,12 +13,23 @@ CHAT_URL = f"{SERVER_URL}/chat"
 HEALTH_URL = f"{SERVER_URL}/health"
 PLAYBACK_URL = f"{SERVER_URL}/voice/playback"
 
-STT_MODEL = os.getenv("AIVTUBER_STT_MODEL", "small")
-STT_DEVICE = os.getenv("AIVTUBER_STT_DEVICE", "cpu")
-STT_COMPUTE_TYPE = os.getenv("AIVTUBER_STT_COMPUTE_TYPE", "int8")
-
 session = requests.Session()
 stop_event = threading.Event()
+
+
+def stt_runtime_settings() -> tuple[str, str, str]:
+    device = os.getenv("AIVTUBER_STT_DEVICE")
+    if not device:
+        try:
+            import ctranslate2
+
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        except (ImportError, OSError, RuntimeError):
+            device = "cpu"
+
+    model = os.getenv("AIVTUBER_STT_MODEL", "turbo" if device == "cuda" else "small")
+    compute_type = os.getenv("AIVTUBER_STT_COMPUTE_TYPE", "int8_float16" if device == "cuda" else "int8")
+    return model, device, compute_type
 
 
 class PendingSpeech:
@@ -170,20 +181,21 @@ def on_recording_stop() -> None:
 
 def main() -> None:
     wait_for_server()
+    model, device, compute_type = stt_runtime_settings()
 
     print(
-        f"[STT] 모델={STT_MODEL}, 장치={STT_DEVICE}, "
-        f"정밀도={STT_COMPUTE_TYPE}"
+        f"[STT] 모델={model}, 장치={device}, "
+        f"정밀도={compute_type}"
     )
     print("[STT] 첫 실행은 음성 인식 모델 다운로드 때문에 오래 걸릴 수 있습니다.")
 
     recorder = AudioToTextRecorder(
-        model=STT_MODEL,
+        model=model,
         language="ko",
-        device=STT_DEVICE,
-        compute_type=STT_COMPUTE_TYPE,
+        device=device,
+        compute_type=compute_type,
         batch_size=0,
-        beam_size=3,
+        beam_size=5,
         silero_use_onnx=True,
         webrtc_sensitivity=2,
         post_speech_silence_duration=0.55,
@@ -192,10 +204,6 @@ def main() -> None:
         pre_recording_buffer_duration=0.4,
         ensure_sentence_starting_uppercase=False,
         ensure_sentence_ends_with_period=False,
-        initial_prompt=(
-            "한국어 대화입니다. 게임, 애니메이션, 버튜버, GPT-SoVITS, "
-            "Ollama 같은 고유명사가 등장할 수 있습니다."
-        ),
         spinner=False,
         on_recording_start=on_recording_start,
         on_recording_stop=on_recording_stop,
