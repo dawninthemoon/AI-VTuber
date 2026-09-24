@@ -46,7 +46,8 @@ public sealed class ChatResponseService
     public async Task<ChatResponse> RespondAsync(
         string message,
         CancellationToken cancellationToken = default,
-        SpeechSource source = SpeechSource.DirectChat)
+        SpeechSource source = SpeechSource.DirectChat,
+        string? classificationText = null)
     {
         if (string.IsNullOrWhiteSpace(message))
         {
@@ -101,7 +102,7 @@ public sealed class ChatResponseService
 
             await _lock.WaitAsync(cancellationToken);
             acquired = true;
-            GenerationProfile profile = _classifier.Classify(message);
+            GenerationProfile profile = _classifier.Classify(classificationText ?? message);
             SearchEvidence? evidence = null;
 
             async Task<AICharacterResponse> GenerateResponseAsync()
@@ -110,7 +111,7 @@ public sealed class ChatResponseService
                 {
                     try
                     {
-                        evidence = await _searchService.SearchAsync(message, cancellationToken);
+                        evidence = await _searchService.SearchAsync(classificationText ?? message, cancellationToken);
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -124,7 +125,7 @@ public sealed class ChatResponseService
                 }
 
                 return await _chatService.SendAsync(
-                    message, evidence, cancellationToken, OnTextDeltaAsync);
+                    message, evidence, cancellationToken, OnTextDeltaAsync, classificationText);
             }
 
             Task<AICharacterResponse> responseTask = GenerateResponseAsync();

@@ -9,4 +9,8 @@ public sealed class YouTubeOptions
     public string TriggerPrefix { get; set; } = "";
     public int MaxMessageLength { get; set; } = 200;
     public int QueueCapacity { get; set; } = 100;
+    public int BatchQuietMilliseconds { get; set; } = 3000;
+    public int BatchMaxMilliseconds { get; set; } = 6000;
+    public int BatchMaxMessages { get; set; } = 12;
+    public int MaxQueuedMessageAgeSeconds { get; set; } = 30;
 }

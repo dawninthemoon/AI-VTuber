@@ -49,7 +49,8 @@ public sealed class ChatService
         string userMessage,
         SearchEvidence? evidence = null,
         CancellationToken cancellationToken = default,
-        Func<string, string, float, CancellationToken, Task>? onTextDelta = null)
+        Func<string, string, float, CancellationToken, Task>? onTextDelta = null,
+        string? classificationText = null)
     {
         if (string.IsNullOrWhiteSpace(userMessage))
         {
@@ -78,7 +79,7 @@ public sealed class ChatService
 
             // 2. CHAT / FACT / THINK 분류
             GenerationProfile profile =
-                _classifier.Classify(userMessage);
+                _classifier.Classify(classificationText ?? userMessage);
 
             if (profile.NeedsSearch && (evidence == null || !evidence.HasResults))
             {

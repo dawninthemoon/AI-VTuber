@@ -4,6 +4,7 @@ using AIVTuber.Web.Models;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Net;
+using System.Threading.Channels;
 
 static void Check(bool condition, string name)
 {
@@ -53,10 +54,53 @@ status.Message("499", "response_ready");
 using var updated = JsonDocument.Parse(JsonSerializer.Serialize(status.Snapshot()));
 Check(updated.RootElement.GetProperty("recent")[1].GetProperty("Status").GetString() == "response_ready", "Consumer updates observation history");
 
+var buffered = Channel.CreateUnbounded<YouTubeChatMessage>();
+var arrived = DateTimeOffset.UtcNow.AddSeconds(-10);
+for (int i = 0; i < 4; i++)
+    buffered.Writer.TryWrite(new YouTubeChatMessage(i.ToString(), "viewer", "channel", "chat", arrived.AddMilliseconds(i * 700)));
+buffered.Writer.TryWrite(new YouTubeChatMessage("later", "viewer", "channel", "next topic", arrived.AddSeconds(8)));
+buffered.Writer.TryComplete();
+var batcher = new YouTubeChatBatcher(buffered.Reader, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), 12);
+var firstBatch = await batcher.ReadAsync(CancellationToken.None);
+var secondBatch = await batcher.ReadAsync(CancellationToken.None);
+Check(firstBatch?.Count == 4 && secondBatch?.Count == 1 && secondBatch[0].Id == "later",
+    "Buffered messages form one burst and preserve the next burst");
+Check(await batcher.ReadAsync(CancellationToken.None) == null, "Completed chat queue drains after the last burst");
+
+var capped = Channel.CreateUnbounded<YouTubeChatMessage>();
+for (int i = 0; i < 4; i++)
+    capped.Writer.TryWrite(new YouTubeChatMessage(i.ToString(), "viewer", "channel", "chat", arrived.AddMilliseconds(i * 100)));
+capped.Writer.TryComplete();
+var cappedBatcher = new YouTubeChatBatcher(capped.Reader, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), 3);
+Check((await cappedBatcher.ReadAsync(CancellationToken.None))?.Count == 3 &&
+      (await cappedBatcher.ReadAsync(CancellationToken.None))?.Count == 1,
+    "Busy chat has a bounded number of messages per response");
+
+var arriving = Channel.CreateUnbounded<YouTubeChatMessage>();
+var arrivingBatcher = new YouTubeChatBatcher(arriving.Reader, TimeSpan.FromMilliseconds(300),
+    TimeSpan.FromMilliseconds(600), 12);
+arriving.Writer.TryWrite(new YouTubeChatMessage("a", "viewer", "channel", "ㅋㅋㅋ", DateTimeOffset.UtcNow));
+var readArriving = arrivingBatcher.ReadAsync(CancellationToken.None);
+await Task.Delay(40);
+arriving.Writer.TryWrite(new YouTubeChatMessage("b", "viewer", "channel", "맞짱뜰래?", DateTimeOffset.UtcNow));
+arriving.Writer.TryComplete();
+Check((await readArriving)?.Count == 2, "Chat arriving during the quiet window joins the response");
+
+var stopping = Channel.CreateUnbounded<YouTubeChatMessage>();
+stopping.Writer.TryWrite(new YouTubeChatMessage("shutdown", "viewer", "channel", "chat", DateTimeOffset.UtcNow));
+var stoppingBatcher = new YouTubeChatBatcher(stopping.Reader, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), 12);
+using (var stopRead = new CancellationTokenSource(TimeSpan.FromMilliseconds(40)))
+{
+    try { await stoppingBatcher.ReadAsync(stopRead.Token); }
+    catch (OperationCanceledException) when (stopRead.IsCancellationRequested) { }
+}
+Check(stoppingBatcher.InFlight?.Count == 1 && stoppingBatcher.InFlight[0].Id == "shutdown",
+    "Shutdown retains an unfinished burst for cancellation status");
+
 var queueStatus = new YouTubeChatStatus();
 using var queueHttp = new HttpClient();
 using var queueService = new YouTubeLiveChatService(queueHttp, null!, Options.Create(new YouTubeOptions { QueueCapacity = 100 }),
-    NullLogger<YouTubeLiveChatService>.Instance, queueStatus);
+    NullLogger<YouTubeLiveChatService>.Instance, queueStatus, new SpeechTurnCoordinator());
 for (int i = 0; i < 101; i++)
 {
     var message = new YouTubeChatMessage(i.ToString(), "viewer", "channel", "안녕");
@@ -72,7 +116,8 @@ var quotaStatus = new YouTubeChatStatus();
 var handler = new QuotaHandler();
 using var quotaHttp = new HttpClient(handler);
 using var quotaService = new YouTubeLiveChatService(quotaHttp, null!, Options.Create(new YouTubeOptions
-    { Enabled = true, ApiKey = "fake-test-key", VideoId = "test" }), NullLogger<YouTubeLiveChatService>.Instance, quotaStatus);
+    { Enabled = true, ApiKey = "fake-test-key", VideoId = "test" }), NullLogger<YouTubeLiveChatService>.Instance, quotaStatus,
+    new SpeechTurnCoordinator());
 await quotaService.StartAsync(CancellationToken.None);
 for (int i = 0; i < 300; i++)
 {

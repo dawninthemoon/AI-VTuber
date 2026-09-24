@@ -9,9 +9,12 @@
 기존의 2초 이내 동일 인식 결과 중복 제거는 유지합니다.
 
 특정 단어를 치환하지 않고 모델의 인식 결과를 그대로 서버에 보냅니다.
-NVIDIA CUDA GPU를 사용할 수 있으면 다국어 Whisper `turbo` 모델을
+NVIDIA CUDA GPU와 실행 라이브러리를 사용할 수 있으면 다국어 Whisper `turbo` 모델을
 `int8_float16`으로 사용하고, 그렇지 않으면 기존 `small`/CPU/`int8` 설정을
 사용합니다. 첫 `turbo` 실행에서는 약 1.6GB의 모델 파일이 다운로드됩니다.
+Windows에서는 RealtimeSTT 환경이나 같은 Conda 설치의 `GPTSoVits` 환경에
+있는 CUDA DLL을 찾아 사용합니다. 다른 위치에 있다면
+`AIVTUBER_STT_CUDA_DLL_DIR`로 해당 폴더를 지정할 수 있습니다.
 `AIVTUBER_STT_MODEL`, `AIVTUBER_STT_DEVICE`, `AIVTUBER_STT_COMPUTE_TYPE`
 환경 변수로 모델과 실행 장치를 직접 지정할 수 있습니다. 변경 사항은 STT를
 다시 시작해야 적용됩니다.

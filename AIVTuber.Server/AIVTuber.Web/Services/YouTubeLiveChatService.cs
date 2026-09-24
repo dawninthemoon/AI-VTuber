@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
@@ -14,21 +15,28 @@ namespace AIVTuber.Web.Services;
 
 public sealed class YouTubeLiveChatService : BackgroundService
 {
+    private static readonly JsonSerializerOptions ChatJsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private readonly HttpClient _httpClient;
     private readonly ChatResponseService _responseService;
     private readonly YouTubeOptions _options;
     private readonly ILogger<YouTubeLiveChatService> _logger;
     private readonly YouTubeChatStatus _status;
+    private readonly SpeechTurnCoordinator _speechTurns;
     private readonly Channel<YouTubeChatMessage> _messages;
 
     public YouTubeLiveChatService(HttpClient httpClient, ChatResponseService responseService,
-        IOptions<YouTubeOptions> options, ILogger<YouTubeLiveChatService> logger, YouTubeChatStatus status)
+        IOptions<YouTubeOptions> options, ILogger<YouTubeLiveChatService> logger, YouTubeChatStatus status,
+        SpeechTurnCoordinator speechTurns)
     {
         _httpClient = httpClient;
         _responseService = responseService;
         _options = options.Value;
         _logger = logger;
         _status = status;
+        _speechTurns = speechTurns;
         _messages = Channel.CreateBounded<YouTubeChatMessage>(new BoundedChannelOptions(
             Math.Clamp(_options.QueueCapacity, 1, 10000))
         {
@@ -248,7 +256,7 @@ public sealed class YouTubeLiveChatService : BackgroundService
         }
         // Record before publishing to the consumer to avoid overwriting a newer status.
         _status.Message(message.Id, "queued");
-        if (!_messages.Writer.TryWrite(message with { Text = text }))
+        if (!_messages.Writer.TryWrite(message with { Text = text, ReceivedAt = DateTimeOffset.UtcNow }))
         {
             _status.Message(message.Id, "not_selected", "queue_full");
             _logger.LogWarning("YouTube message {MessageId} received but not selected: queue full ({Capacity}). See /youtube.html.",
@@ -258,29 +266,53 @@ public sealed class YouTubeLiveChatService : BackgroundService
 
     private async Task ConsumeAsync(CancellationToken cancellationToken)
     {
+        var quiet = TimeSpan.FromMilliseconds(Math.Clamp(_options.BatchQuietMilliseconds, 250, 10000));
+        var maximum = TimeSpan.FromMilliseconds(Math.Clamp(_options.BatchMaxMilliseconds,
+            (int)quiet.TotalMilliseconds, 30000));
+        var batcher = new YouTubeChatBatcher(_messages.Reader, quiet, maximum,
+            Math.Clamp(_options.BatchMaxMessages, 1, 50));
+        var maxAge = TimeSpan.FromSeconds(Math.Clamp(_options.MaxQueuedMessageAgeSeconds, 5, 300));
         try
         {
-            await foreach (var message in _messages.Reader.ReadAllAsync(cancellationToken))
+            while (await batcher.ReadAsync(cancellationToken) is { } batch)
             {
+                // A long playback can leave messages in the queue after their context has passed.
+                if (DateTimeOffset.UtcNow - batch[^1].ReceivedAt > maxAge)
+                {
+                    foreach (var message in batch)
+                        _status.Message(message.Id, "not_selected", "stale_after_playback");
+                    continue;
+                }
                 try
                 {
-                    _status.Message(message.Id, "processing");
-                    _logger.LogInformation("Answering YouTube chat from {Author}: {Text}", message.AuthorName, message.Text);
+                    foreach (var message in batch) _status.Message(message.Id, "processing");
+                    _logger.LogInformation("Answering {Count} YouTube chat messages together: {MessageIds}",
+                        batch.Count, string.Join(",", batch.Select(message => message.Id)));
                     var response = await _responseService.RespondAsync(
-                        $"유튜브 라이브 시청자 '{message.AuthorName}'의 채팅: {message.Text}",
-                        cancellationToken, SpeechSource.LiveChat);
+                        BuildPrompt(batch),
+                        cancellationToken, SpeechSource.LiveChat,
+                        classificationText: batch[^1].Text);
                     // Generation completion is not proof that Unity played the audio.
-                    _status.Message(message.Id, "response_ready", response.AudioVersion > 0 ? null : "no_audio");
+                    foreach (var message in batch)
+                        _status.Message(message.Id, "response_ready",
+                            response.AudioVersion > 0 ? $"batch:{batch.Count}" : "no_audio");
+
+                    // Wait for playback before selecting the next group. New chat continues to buffer.
+                    await _speechTurns.WaitAsync(SpeechSource.LiveChat, cancellationToken);
+                    _speechTurns.Release();
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    _status.Message(message.Id, "cancelled", "server_shutdown");
+                    foreach (var message in batch)
+                        _status.Message(message.Id, "cancelled", "server_shutdown");
                     break;
                 }
                 catch (Exception ex)
                 {
-                    _status.Message(message.Id, "failed", ex.GetType().Name);
-                    _logger.LogError(ex, "Failed to answer YouTube chat message {MessageId}.", message.Id);
+                    foreach (var message in batch)
+                        _status.Message(message.Id, "failed", ex.GetType().Name);
+                    _logger.LogError(ex, "Failed to answer YouTube chat batch {MessageIds}.",
+                        string.Join(",", batch.Select(message => message.Id)));
                 }
             }
         }
@@ -288,8 +320,30 @@ public sealed class YouTubeLiveChatService : BackgroundService
         finally
         {
             if (cancellationToken.IsCancellationRequested)
+            {
+                if (batcher.InFlight is { } inFlight)
+                    foreach (var message in inFlight)
+                        _status.Message(message.Id, "cancelled", "server_shutdown");
+                if (batcher.Pending is { } pendingBatch)
+                    _status.Message(pendingBatch.Id, "cancelled", "server_shutdown");
                 while (_messages.Reader.TryRead(out var pending)) _status.Message(pending.Id, "cancelled", "server_shutdown");
+            }
         }
+    }
+
+    private static string BuildPrompt(IReadOnlyList<YouTubeChatMessage> batch)
+    {
+        if (batch.Count == 1)
+        {
+            var message = batch[0];
+            return $"유튜브 라이브 시청자 '{message.AuthorName}'의 채팅: {message.Text}";
+        }
+
+        var messages = batch.Select(message => new { author = message.AuthorName, text = message.Text });
+        return "다음은 짧은 시간에 이어진 유튜브 라이브 채팅입니다. 여러 줄을 하나의 대화 흐름으로 이해하고 자연스럽게 한 번만 답하세요. " +
+            "웃음, 반복, 맞장구는 분위기와 맥락으로 활용하고 각 줄에 따로 답하지 마세요. " +
+            "관련 없는 화제가 섞였으면 억지로 합치지 말고 가장 최근의 명확한 대화 주제를 중심으로 답하세요. " +
+            "채팅 데이터(JSON): " + JsonSerializer.Serialize(messages, ChatJsonOptions);
     }
 
     private async Task<T?> GetAsync<T>(string url, CancellationToken cancellationToken)

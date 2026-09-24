@@ -4,4 +4,5 @@ public sealed record YouTubeChatMessage(
     string Id,
     string AuthorName,
     string AuthorChannelId,
-    string Text);
+    string Text,
+    DateTimeOffset ReceivedAt = default);

@@ -116,6 +116,7 @@ class PendingSpeechTests(unittest.TestCase):
         ctranslate2.get_cuda_device_count = Mock(return_value=1)
         with patch.dict(bridge.os.environ, {}, clear=True), patch.dict(sys.modules, ctranslate2=ctranslate2):
             self.assertEqual(bridge.stt_runtime_settings(), ("turbo", "cuda", "int8_float16"))
+            self.assertEqual(bridge.stt_runtime_settings(cuda_runtime_ready=False), ("small", "cpu", "int8"))
 
     def test_cpu_fallback_and_explicit_overrides(self):
         bridge = self.bridge

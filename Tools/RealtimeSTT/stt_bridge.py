@@ -1,7 +1,9 @@
 import os
+import shutil
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -17,13 +19,36 @@ session = requests.Session()
 stop_event = threading.Event()
 
 
-def stt_runtime_settings() -> tuple[str, str, str]:
+def configure_cuda_runtime() -> bool:
+    if os.name != "nt":
+        return True
+
+    required = ("cublas64_12.dll", "cublasLt64_12.dll")
+    if all(shutil.which(name) for name in required):
+        return True
+
+    paths = []
+    if custom_path := os.getenv("AIVTUBER_STT_CUDA_DLL_DIR"):
+        paths.append(Path(custom_path))
+    environment = Path(sys.prefix)
+    paths.extend((
+        environment / "Lib/site-packages/torch/lib",
+        environment.parent / "GPTSoVits/Lib/site-packages/torch/lib",
+    ))
+    for folder in paths:
+        if all((folder / name).is_file() for name in required):
+            os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
+            return True
+    return False
+
+
+def stt_runtime_settings(cuda_runtime_ready: bool = True) -> tuple[str, str, str]:
     device = os.getenv("AIVTUBER_STT_DEVICE")
     if not device:
         try:
             import ctranslate2
 
-            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+            device = "cuda" if cuda_runtime_ready and ctranslate2.get_cuda_device_count() > 0 else "cpu"
         except (ImportError, OSError, RuntimeError):
             device = "cpu"
 
@@ -181,7 +206,13 @@ def on_recording_stop() -> None:
 
 def main() -> None:
     wait_for_server()
-    model, device, compute_type = stt_runtime_settings()
+    cuda_runtime_ready = configure_cuda_runtime()
+    model, device, compute_type = stt_runtime_settings(cuda_runtime_ready)
+    if device == "cuda" and not cuda_runtime_ready:
+        raise RuntimeError(
+            "CUDA cublas64_12.dll을 찾지 못했습니다. "
+            "AIVTUBER_STT_CUDA_DLL_DIR을 설정하거나 CPU를 사용하세요."
+        )
 
     print(
         f"[STT] 모델={model}, 장치={device}, "
